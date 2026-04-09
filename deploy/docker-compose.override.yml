@@ -1,0 +1,45 @@
+# ──────────────────────────────────────────────────────────────
+#  IOTStack docker-compose override for ETS Slow Control
+#
+#  Merge with your IOTStack docker-compose.yml:
+#    docker compose -f docker-compose.yml -f docker-compose.override.yml up -d
+# ──────────────────────────────────────────────────────────────
+
+version: "3.8"
+
+services:
+
+  # ── Telegraf (MQTT → InfluxDB bridge) ────────────────────────
+  telegraf:
+    image: telegraf:latest
+    container_name: telegraf
+    restart: unless-stopped
+    depends_on:
+      - mosquitto
+      - influxdb
+    environment:
+      - INFLUX_TOKEN=${INFLUX_TOKEN}
+    volumes:
+      - ./volumes/telegraf/telegraf.conf:/etc/telegraf/telegraf.conf:ro
+    networks:
+      - iotstack_nw
+
+  # ── Grafana (dashboards & alerting) ──────────────────────────
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    restart: unless-stopped
+    depends_on:
+      - influxdb
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+    volumes:
+      - ./volumes/grafana:/var/lib/grafana
+    networks:
+      - iotstack_nw
+
+networks:
+  iotstack_nw:
+    external: true

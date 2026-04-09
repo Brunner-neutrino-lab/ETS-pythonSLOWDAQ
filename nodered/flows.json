@@ -1,0 +1,165 @@
+[
+    {
+        "id": "ets-slowcontrol-flow",
+        "type": "tab",
+        "label": "ETS Slow Control",
+        "disabled": false,
+        "info": "Thin control dashboard — logic lives in Python.\nThis flow provides browser-accessible buttons and status indicators\nthat communicate via MQTT with the slow-control service."
+    },
+    {
+        "id": "comment-header",
+        "type": "comment",
+        "z": "ets-slowcontrol-flow",
+        "name": "ETS Slow Control — Node-RED Dashboard",
+        "info": "All logic runs in the Python service.\nThis dashboard is MQTT pub/sub only.",
+        "x": 200,
+        "y": 40,
+        "wires": []
+    },
+    {
+        "id": "mqtt-broker",
+        "type": "mqtt-broker",
+        "name": "Mosquitto",
+        "broker": "localhost",
+        "port": "1883",
+        "clientid": "nodered-ets",
+        "autoConnect": true,
+        "keepalive": "60",
+        "cleansession": true
+    },
+    {
+        "id": "ui-tab-main",
+        "type": "ui_tab",
+        "name": "Slow Control",
+        "icon": "dashboard",
+        "order": 1
+    },
+    {
+        "id": "ui-group-relays",
+        "type": "ui_group",
+        "name": "Relays",
+        "tab": "ui-tab-main",
+        "order": 1,
+        "width": 6
+    },
+    {
+        "id": "ui-group-status",
+        "type": "ui_group",
+        "name": "Status",
+        "tab": "ui-tab-main",
+        "order": 2,
+        "width": 6
+    },
+    {
+        "id": "btn-ln2-open",
+        "type": "ui_button",
+        "z": "ets-slowcontrol-flow",
+        "name": "LN2 Valve Open",
+        "group": "ui-group-relays",
+        "label": "LN2 OPEN",
+        "color": "white",
+        "bgcolor": "red",
+        "x": 150,
+        "y": 140,
+        "wires": [["pub-ln2-open"]]
+    },
+    {
+        "id": "pub-ln2-open",
+        "type": "mqtt out",
+        "z": "ets-slowcontrol-flow",
+        "name": "",
+        "topic": "ets/commands/relay/ln2_valve",
+        "broker": "mqtt-broker",
+        "x": 400,
+        "y": 140,
+        "wires": []
+    },
+    {
+        "id": "btn-ln2-close",
+        "type": "ui_button",
+        "z": "ets-slowcontrol-flow",
+        "name": "LN2 Valve Close",
+        "group": "ui-group-relays",
+        "label": "LN2 CLOSE",
+        "color": "white",
+        "bgcolor": "green",
+        "x": 150,
+        "y": 180,
+        "wires": [["pub-ln2-close"]]
+    },
+    {
+        "id": "pub-ln2-close",
+        "type": "mqtt out",
+        "z": "ets-slowcontrol-flow",
+        "name": "",
+        "topic": "ets/commands/relay/ln2_valve",
+        "broker": "mqtt-broker",
+        "x": 400,
+        "y": 180,
+        "wires": []
+    },
+    {
+        "id": "sub-autovalve-status",
+        "type": "mqtt in",
+        "z": "ets-slowcontrol-flow",
+        "name": "",
+        "topic": "ets/status/autovalve",
+        "broker": "mqtt-broker",
+        "x": 150,
+        "y": 300,
+        "wires": [["parse-av-status"]]
+    },
+    {
+        "id": "parse-av-status",
+        "type": "json",
+        "z": "ets-slowcontrol-flow",
+        "name": "Parse JSON",
+        "x": 350,
+        "y": 300,
+        "wires": [["display-av-status"]]
+    },
+    {
+        "id": "display-av-status",
+        "type": "ui_text",
+        "z": "ets-slowcontrol-flow",
+        "group": "ui-group-status",
+        "name": "Autovalve State",
+        "label": "Autovalve",
+        "format": "{{msg.payload.state}} [{{msg.payload.mode}}]",
+        "x": 550,
+        "y": 300,
+        "wires": []
+    },
+    {
+        "id": "sub-heartbeat",
+        "type": "mqtt in",
+        "z": "ets-slowcontrol-flow",
+        "name": "",
+        "topic": "ets/status/service/heartbeat",
+        "broker": "mqtt-broker",
+        "x": 150,
+        "y": 360,
+        "wires": [["parse-heartbeat"]]
+    },
+    {
+        "id": "parse-heartbeat",
+        "type": "json",
+        "z": "ets-slowcontrol-flow",
+        "name": "Parse JSON",
+        "x": 350,
+        "y": 360,
+        "wires": [["display-heartbeat"]]
+    },
+    {
+        "id": "display-heartbeat",
+        "type": "ui_text",
+        "z": "ets-slowcontrol-flow",
+        "group": "ui-group-status",
+        "name": "Service Uptime",
+        "label": "Uptime",
+        "format": "{{msg.payload.uptime | number:0}}s",
+        "x": 550,
+        "y": 360,
+        "wires": []
+    }
+]

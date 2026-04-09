@@ -1,0 +1,15 @@
+name: ets-sc
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python>=3.10
+  - pip
+  - pip:
+    - paho-mqtt>=2.0
+    - PyYAML>=6.0
+    - pyserial>=3.5
+    - PyQt5>=5.15
+    - influxdb-client>=1.36
+    - pytest>=7.0
+    - pytest-mock>=3.0

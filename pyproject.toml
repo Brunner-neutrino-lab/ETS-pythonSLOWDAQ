@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ets-slowcontrol"
+version = "0.1.0"
+description = "ETS Cryostat Slow Control System"
+requires-python = ">=3.10"
+dependencies = [
+    "paho-mqtt>=2.0",
+    "PyYAML>=6.0",
+    "pyserial>=3.5",
+]
+
+[project.optional-dependencies]
+gui = ["PyQt5>=5.15"]
+labjack = ["labjack-ljm>=1.23"]
+pi = ["RPi.GPIO>=0.7"]
+influx = ["influxdb-client>=1.36"]
+dev = ["pytest>=7.0", "pytest-mock>=3.0"]
+all = [
+    "ets-slowcontrol[gui,labjack,pi,influx,dev]",
+]
+
+[project.scripts]
+ets-slowcontrol = "slowcontrol.app:main"
+
+[tool.setuptools.packages.find]
+include = ["slowcontrol*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

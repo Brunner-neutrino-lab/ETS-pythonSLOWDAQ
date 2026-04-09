@@ -1,0 +1,101 @@
+# ──────────────────────────────────────────────────────────────
+#  ETS Slow Control — System Configuration
+# ──────────────────────────────────────────────────────────────
+
+mqtt:
+  broker: localhost
+  port: 1883
+  client_id: ets-slowcontrol
+
+# ── Sensor Drivers ─────────────────────────────────────────────
+drivers:
+
+  labjack_tc:
+    type: labjack_t7
+    serial: "470019751"
+    poll_interval: 1.0
+    channels:
+      K1:  {ain: 0,  sensor: thermocouple, tc_type: K}
+      K2:  {ain: 2,  sensor: thermocouple, tc_type: K}
+      TC1: {ain: 4,  sensor: thermocouple, tc_type: T}
+      TC2: {ain: 6,  sensor: thermocouple, tc_type: T}
+      TC3: {ain: 8,  sensor: thermocouple, tc_type: T}
+      TC4: {ain: 10, sensor: thermocouple, tc_type: T}
+      TC5: {ain: 12, sensor: thermocouple, tc_type: T}
+
+  labjack_res:
+    type: labjack_t7
+    serial: "470019220"
+    poll_interval: 1.0
+    channels:
+      RES1: {ain: 0, sensor: voltage}
+      RES2: {ain: 1, sensor: voltage}
+      RES3: {ain: 2, sensor: voltage}
+      RES4: {ain: 3, sensor: voltage}
+      RES5: {ain: 4, sensor: voltage}
+      RES6: {ain: 5, sensor: voltage}
+      RES7: {ain: 6, sensor: voltage}
+      FRG1: {ain: [8, 9], sensor: frg_pressure}
+
+  lakeshore:
+    type: lakeshore350
+    host: 192.168.1.50
+    port: 7777
+    poll_interval: 1.0
+    inputs: [A, B, C, D]
+
+  humidity:
+    type: dht_serial
+    port: /dev/ttyUSB0
+    baud: 9600
+    poll_interval: 5.0
+
+# ── GPIO Relays ────────────────────────────────────────────────
+relays:
+  ln2_valve:        {pin: 19, default: closed, active_low: true}
+  pressure_sensor:  {pin: 26, default: closed, active_low: true}
+  gn2_valve:        {pin: 13, default: closed, active_low: true}
+
+# ── Autonomous Controllers ────────────────────────────────────
+controllers:
+
+  autovalve:
+    enabled: true
+    mode: gradient                  # gradient | threshold
+    level_channels: [RES1, RES2]
+    overfill_channel: RES7
+    valve_relay: ln2_valve
+    fill_timeout: 600               # seconds
+    cooldown: 900                   # seconds
+    overfill_threshold: 9.8         # volts
+    overfill_close: 9.0             # volts
+    full_tank: 9.5                  # volts
+    gradient_trigger: -1.0e-4       # V/s
+    scan_interval: 1.0              # seconds
+
+  humidity_pid:
+    enabled: true
+    setpoint: 7.2                   # %RH
+    Kp: 1.0
+    Ki: 0.0
+    Kd: 0.0
+    cycle_duration: 600             # seconds
+    relay: gn2_valve
+
+# ── Safety Interlocks ─────────────────────────────────────────
+interlocks:
+  enabled: true
+  watchdog_timeout: 60              # seconds with no data → close all
+  rules:
+    overfill:
+      topic: ets/sensors/labjack_res/RES7
+      condition: ">"
+      threshold: 9.8
+      action: close
+      relay: ln2_valve
+    overpressure:
+      topic: ets/sensors/labjack_res/FRG1
+      condition: ">"
+      threshold: 100.0
+      action: close
+      relay: gn2_valve
