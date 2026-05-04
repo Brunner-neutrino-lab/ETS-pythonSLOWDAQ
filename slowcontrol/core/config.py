@@ -74,7 +74,7 @@ class AppConfig:
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> AppConfig:
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             raw = yaml.safe_load(f)
         return cls._parse(raw)
 
