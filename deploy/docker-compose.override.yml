@@ -16,7 +16,7 @@ services:
     restart: unless-stopped
     depends_on:
       - mosquitto
-      - influxdb
+      - influxdb2
     environment:
       - INFLUX_TOKEN=${INFLUX_TOKEN}
     volumes:
@@ -30,7 +30,7 @@ services:
     container_name: grafana
     restart: unless-stopped
     depends_on:
-      - influxdb
+      - influxdb2
     ports:
       - "3000:3000"
     environment:
