@@ -1,0 +1,27 @@
+# systemd unit for the ETS Slow Control headless service.
+#
+# Install:
+#   sudo cp deploy/ets-slowcontrol.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now ets-slowcontrol
+#
+# Logs:  journalctl -u ets-slowcontrol -f
+
+[Unit]
+Description=ETS Slow Control Service
+After=network.target docker.service
+Wants=docker.service
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/ETS-pythonSLOWDAQ
+ExecStart=/home/pi/ETS-pythonSLOWDAQ/venv/bin/python -m slowcontrol.app service -c /home/pi/ETS-pythonSLOWDAQ/config.yaml
+# Credentials (ETS_MQTT_USER, ETS_MQTT_PASS).  The leading "-" makes the file
+# optional so the service still starts cleanly before the file exists.
+EnvironmentFile=-/etc/ets-slowcontrol/secrets.env
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

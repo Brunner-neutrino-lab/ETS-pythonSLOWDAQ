@@ -1,0 +1,543 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ets — control</title>
+<style>
+  :root { --bg:#11151c; --panel:#1b2230; --panel2:#232c3d; --fg:#dde3ee; --mut:#8a93a6;
+          --ok:#3fb950; --warn:#d29922; --bad:#f85149; --acc:#58a6ff; --line:#2d3648; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.45 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; }
+  header { display:flex; align-items:center; gap:.8rem; flex-wrap:wrap; padding:.6rem 1rem;
+           background:var(--panel); border-bottom:1px solid var(--line); position:sticky; top:0; z-index:5; }
+  header h1 { font-size:1.1rem; margin:0 .4rem 0 0; font-weight:600; letter-spacing:.3px; }
+  .pill { padding:.15rem .55rem; border-radius:999px; font-size:.78rem; font-weight:600; white-space:nowrap; }
+  .pill.ok{background:rgba(63,185,80,.18);color:var(--ok)} .pill.bad{background:rgba(248,81,73,.18);color:var(--bad)}
+  .pill.warn{background:rgba(210,153,34,.18);color:var(--warn)} .pill.mut{background:rgba(138,147,166,.15);color:var(--mut)}
+  a.nav { color:var(--acc); font-size:.85rem; text-decoration:none; padding:.18rem .5rem; border:1px solid var(--line); border-radius:6px; }
+  a.nav:hover { border-color:var(--acc); }
+  main { display:grid; grid-template-columns:repeat(auto-fit,minmax(360px,1fr)); gap:.7rem; padding:.7rem; align-items:start; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:.6rem .9rem .8rem; }
+  .card h2 { font-size:.95rem; margin:.05rem 0 .55rem; color:var(--acc); font-weight:600; letter-spacing:.3px; }
+  .blk { border-top:1px solid var(--line); padding:.4rem 0 .25rem; }
+  .blk:first-of-type { border-top:0; padding-top:0; }
+  .row { display:flex; gap:.4rem; align-items:center; flex-wrap:wrap; margin:.2rem 0; }
+  .row .lbl { color:var(--mut); min-width:6rem; font-size:.84rem; }
+  .title { font-weight:600; }
+  .num { font-variant-numeric:tabular-nums; }
+  .cur { color:var(--mut); font-size:.82rem; }
+  .cur.stale { color:var(--warn); } .cur.invalid { color:var(--mut); opacity:.6; }
+  input[type=number],input[type=text] {
+    background:var(--panel2); color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:.26rem .4rem; font:inherit; }
+  input[type=number] { width:6rem; text-align:right; }
+  button { background:var(--panel2); color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:.28rem .65rem; cursor:pointer; font:inherit; }
+  button:hover { border-color:var(--acc); }
+  button.act { background:var(--acc); color:#08111f; border-color:var(--acc); font-weight:600; }
+  button.danger { border-color:var(--bad); color:var(--bad); }
+  button.on { background:var(--ok); color:#08120a; border-color:var(--ok); font-weight:600; }
+  button.warn { background:var(--warn); color:#1b1407; border-color:var(--warn); font-weight:600; }
+  .dot { width:.62rem; height:.62rem; border-radius:50%; background:#444b5a; display:inline-block; vertical-align:middle; margin-right:.3rem; }
+  .dot.on{background:var(--ok)} .dot.open{background:var(--bad)}
+  .kv { display:inline-block; margin-right:1rem; }
+  .kv .k { color:var(--mut); margin-right:.25rem; }
+  small.hint { color:var(--mut); display:block; margin-top:.4rem; font-size:.78rem; }
+</style>
+</head>
+<body>
+<header>
+  <h1>ets&nbsp;·&nbsp;control</h1>
+  <span id="p-svc" class="pill mut">service …</span>
+  <span id="p-ilk" class="pill mut">interlocks …</span>
+  <span id="p-mq"  class="pill mut">mqtt …</span>
+  <span style="flex:1"></span>
+  <a class="nav" href="/">Register ↗</a>
+  <a class="nav" href="/readme">README ↗</a>
+  <a class="nav" href="http://132.206.126.208:1441" target="_blank">Grafana ↗</a>
+</header>
+
+<main>
+
+  <!-- ─── Relays (with paired sparklines) ─────────────────────── -->
+  <section class="card" style="grid-column: span 2; min-width: 460px">
+    <h2>Relays</h2>
+    <div id="relays"></div>
+    <small class="hint">"actual" is the state reported by the GPIO relay manager. LN₂ open prompts a confirmation
+      since it physically actuates the dewar transfer valve. The pressure-sensor relay enables the FRG vacuum gauge
+      controller power. Sparklines show ~30 min of recent values (cleared on page reload — open Grafana for history).</small>
+  </section>
+
+  <!-- ─── LakeShore loop 1 ────────────────────────────────────── -->
+  <section class="card" style="grid-column: span 2; min-width: 460px">
+    <h2>LakeShore 350 — loop 1</h2>
+
+    <div class="blk">
+      <div class="row">
+        <span class="kv"><span class="k">RTD A (PV)</span><span id="ls-rtda" class="num">–</span> K</span>
+        <span class="kv"><span class="k">setpoint</span><span id="ls-sp" class="num">–</span> K</span>
+        <span class="kv"><span class="k">heater</span><span id="ls-out" class="num">–</span> %</span>
+      </div>
+      <div class="row">
+        <span class="kv"><span class="k">mode</span><span id="ls-om-txt" class="num">–</span></span>
+        <span class="kv"><span class="k">range</span><span id="ls-rng-txt" class="num">–</span></span>
+        <span class="kv"><span class="k">ramping</span><span id="ls-ramping" class="num">–</span></span>
+      </div>
+    </div>
+
+    <div class="blk">
+      <div class="row"><span class="lbl">setpoint</span>
+        <input type="number" step="0.1" id="ls-sp-in" placeholder="e.g. 165.0">
+        <span class="lbl" style="min-width:auto">K</span>
+        <button class="act" onclick="setLakeShoreSetpoint()">Apply</button>
+        <span id="ls-msg" class="cur"></span></div>
+    </div>
+
+    <div class="blk">
+      <div class="row"><span class="lbl">PID gains</span>
+        <span class="lbl" style="min-width:1rem">P</span><input type="number" step="0.1" id="ls-p-in">
+        <span class="lbl" style="min-width:1rem">I</span><input type="number" step="0.1" id="ls-i-in">
+        <span class="lbl" style="min-width:1rem">D</span><input type="number" step="0.1" id="ls-d-in">
+        <button class="act" onclick="setLakeShorePID()">Set PID</button>
+        <span id="ls-pid-msg" class="cur"></span></div>
+      <small class="hint">Current: <span id="ls-pid-cur" class="num">–</span>. Ranges per LakeShore: P 0.1–1000, I 0.1–1000, D 0–200.</small>
+    </div>
+
+    <div class="blk">
+      <div class="row"><span class="lbl">heater range</span>
+        <select id="ls-rng-in">
+          <option value="0">0 — Off</option>
+          <option value="1">1 — lowest</option>
+          <option value="2">2</option>
+          <option value="3">3</option>
+          <option value="4">4</option>
+          <option value="5">5 — highest</option>
+        </select>
+        <button class="act" onclick="setLakeShoreRange()">Apply</button>
+        <span id="ls-rng-msg" class="cur"></span></div>
+      <small class="hint">Output 1 ranges step in factor-of-10 power increments (5 ≈ 50 W). Heater is fully off
+        when range = 0, regardless of output mode.</small>
+    </div>
+
+    <div class="blk">
+      <div class="row"><span class="lbl">output mode</span>
+        <select id="ls-om-in">
+          <option value="0">0 — Off</option>
+          <option value="1">1 — Closed Loop PID</option>
+          <option value="3">3 — Open Loop (manual)</option>
+          <option value="2">2 — Zone</option>
+          <option value="4">4 — Monitor Out</option>
+          <option value="5">5 — Warmup Supply</option>
+        </select>
+        <button class="act" onclick="setLakeShoreOutMode()">Apply</button>
+        <span id="ls-om-msg" class="cur"></span></div>
+      <small class="hint">Closed Loop = PID controls heater from setpoint. Open Loop = manual output
+        only (set with the field below). Off = no heater current.</small>
+    </div>
+
+    <div class="blk">
+      <div class="row"><span class="lbl">manual output</span>
+        <input type="number" step="0.1" min="0" max="100" id="ls-mout-in" placeholder="0–100">
+        <span class="lbl" style="min-width:auto">%</span>
+        <button class="act" onclick="setLakeShoreMout()">Apply</button>
+        <span id="ls-mout-msg" class="cur"></span></div>
+      <small class="hint">Only effective when output mode is Open Loop / Closed Loop / Zone. In Closed Loop
+        this gets summed with the PID output.</small>
+    </div>
+
+    <div class="blk">
+      <div class="row"><span class="lbl">setpoint ramp</span>
+        <button id="ls-ramp-off" onclick="setLakeShoreRamp(false)">off</button>
+        <button id="ls-ramp-on"  onclick="setLakeShoreRamp(true)">on</button>
+        <span class="lbl" style="min-width:auto">rate</span>
+        <input type="number" step="0.1" min="0.1" max="100" id="ls-ramp-in" placeholder="K/min">
+        <button class="act" onclick="applyLakeShoreRamp()">Apply rate</button>
+        <span id="ls-ramp-msg" class="cur"></span></div>
+      <small class="hint">When on, the controller walks toward the setpoint at the configured rate (0.1–100 K/min)
+        instead of jumping. "ramping" indicator above shows whether a ramp is in progress.</small>
+    </div>
+
+  </section>
+
+  <!-- ─── Autovalve ───────────────────────────────────────────── -->
+  <section class="card">
+    <h2>Autovalve</h2>
+    <div class="row"><span class="kv"><span class="k">state</span><span id="av-state" class="num">–</span></span>
+                    <span class="kv"><span class="k">mode</span><span id="av-mode" class="num">–</span></span>
+                    <span class="kv"><span class="k">enabled</span><span id="av-en" class="num">–</span></span></div>
+    <div class="row"><span class="lbl">enable</span>
+      <button id="av-en-on"  onclick="setAutovalveEnabled(true)">enable (auto)</button>
+      <button id="av-en-off" class="danger" onclick="setAutovalveEnabled(false)">disable (manual)</button>
+      <small class="hint" style="margin:0 0 0 .4rem">"disable" parks the autovalve and closes the LN₂ valve;
+        "enable" puts it back into control using the active trigger mode below.</small></div>
+    <div class="row"><span class="lbl">trigger mode</span>
+      <button id="av-m-grad"   onclick="setAutovalveMode('gradient')">gradient</button>
+      <button id="av-m-thresh" onclick="setAutovalveMode('threshold')">threshold</button>
+      <small class="hint" style="margin:0 0 0 .4rem">gradient = trigger fills from level drop rate;
+        threshold = trigger when RES1/RES2 drop below a fixed voltage.</small></div>
+  </section>
+
+  <!-- ─── Humidity PID ────────────────────────────────────────── -->
+  <section class="card">
+    <h2>Humidity PID (cycles GN₂ valve)</h2>
+    <div class="row"><span class="kv"><span class="k">measured</span><span id="h-m" class="num">–</span> %RH</span>
+                    <span class="kv"><span class="k">setpoint</span><span id="h-sp" class="num">–</span> %RH</span>
+                    <span class="kv"><span class="k">duty</span><span id="h-duty" class="num">–</span></span></div>
+    <div class="row"><span class="lbl">new setpoint</span>
+      <input type="number" step="0.1" id="h-sp-in" placeholder="e.g. 7.2">
+      <span class="lbl" style="min-width:auto">%RH</span>
+      <button class="act" onclick="setHumiditySetpoint()">Apply</button>
+      <span id="h-msg" class="cur"></span></div>
+    <svg id="h-graph" width="100%" height="100" viewBox="0 0 400 100" preserveAspectRatio="none"
+         style="display:block; margin-top:.5rem; background:rgba(255,255,255,.03); border-radius:6px;
+                width:100%; height:100px"></svg>
+    <small class="hint">Measured humidity (blue) and PID setpoint (orange dashed). Lower setpoint →
+      controller cycles the GN₂ valve harder to dry out the cryostat space.
+      Duty cycle is the fraction of each cycle the GN₂ relay is energized.</small>
+  </section>
+
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+
+function fmtNum(v){
+  if (v === null || v === undefined || v === "") return "–";
+  if (typeof v !== "number") return String(v);
+  const a = Math.abs(v);
+  if (a === 0) return "0";
+  if (a >= 1000) return v.toFixed(1);
+  if (a >= 1)   return v.toFixed(2);
+  if (a >= 0.01) return v.toFixed(3);
+  return v.toExponential(2);
+}
+
+// ---- shared snapshot + cmd helper -----------------------------------------
+let SNAP = {states:{}};
+function S(id){ return SNAP.states[id] || null; }
+async function cmd(topic, payload){
+  try {
+    const r = await fetch("/api/cmd", {method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({topic, payload})});
+    if (!r.ok) console.warn("cmd failed", topic, await r.text());
+    return r.ok;
+  } catch(e){ console.error(e); return false; }
+}
+function flash(elId, text, kind){
+  const e = $(elId); if (!e) return;
+  e.textContent = text;
+  e.className = "cur " + (kind || "");
+  setTimeout(() => { e.textContent = ""; }, 4000);
+}
+
+// ---- Rolling per-state buffer for sparklines ------------------------------
+// Each tick (~1.5 s) we append the latest snapshot value for the states we plot.
+// Cap = 1200 points ≈ 30 minutes; older points drop off the front.
+const BUF_MAX = 1200;
+const BUFFERS = {};                    // state-id -> [[t_ms, v], ...]
+function bufAppend(id, t, v){
+  if (v == null || (typeof v === "number" && !Number.isFinite(v))) return;
+  const b = (BUFFERS[id] ||= []);
+  b.push([t, v]);
+  if (b.length > BUF_MAX) b.splice(0, b.length - BUF_MAX);
+}
+function bufLast(id){ const b = BUFFERS[id]; return b && b.length ? b[b.length-1][1] : null; }
+
+// ---- SVG sparkline renderer ----------------------------------------------
+// elId       – <svg> element to draw into
+// stateId    – key into BUFFERS
+// opts.color – stroke colour
+// opts.log   – true ⇒ plot log10(value); drops non-positives
+// opts.refLine – optional horizontal reference line value (e.g. setpoint)
+function renderSpark(elId, stateId, opts={}){
+  const el = $(elId);
+  if (!el) return;
+  const w = +el.getAttribute("width")  || 160;
+  const h = +el.getAttribute("height") || 36;
+  const buf = BUFFERS[stateId] || [];
+  if (buf.length < 2){
+    el.innerHTML = `<text x="4" y="${h-6}" fill="#8a93a6" font-size="10">collecting…</text>`;
+    return;
+  }
+  const ts = buf.map(p => p[0]);
+  let ys = buf.map(p => p[1]);
+  if (opts.log) ys = ys.map(v => v > 0 ? Math.log10(v) : NaN);
+  let refY = opts.refLine;
+  if (opts.log && refY != null) refY = refY > 0 ? Math.log10(refY) : null;
+  const valid = ys.filter(Number.isFinite);
+  if (valid.length < 2){
+    el.innerHTML = `<text x="4" y="${h-6}" fill="#8a93a6" font-size="10">no positive samples</text>`;
+    return;
+  }
+  let minY = Math.min(...valid), maxY = Math.max(...valid);
+  if (refY != null && Number.isFinite(refY)){ minY = Math.min(minY, refY); maxY = Math.max(maxY, refY); }
+  const dY = (maxY - minY) || 1;
+  // 5% top+bottom padding
+  const padY = dY * 0.05;
+  const yScale = v => h - 2 - ((v - minY + padY) / (dY + 2*padY)) * (h - 4);
+  const xMin = ts[0], xMax = ts[ts.length-1], dX = (xMax - xMin) || 1;
+  const xScale = t => 2 + ((t - xMin) / dX) * (w - 4);
+  const pts = ys.map((v, i) => Number.isFinite(v) ? `${xScale(ts[i]).toFixed(1)},${yScale(v).toFixed(1)}` : null)
+                .filter(Boolean).join(" ");
+  const color = opts.color || "#58a6ff";
+  let extra = "";
+  if (refY != null && Number.isFinite(refY)){
+    const y = yScale(refY).toFixed(1);
+    extra += `<line x1="0" y1="${y}" x2="${w}" y2="${y}" stroke="#d29922" stroke-width="1" stroke-dasharray="4 3" opacity="0.7"/>`;
+  }
+  el.innerHTML = `${extra}<polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.5"/>`;
+}
+
+// ---- Relays (3 fixed relays with paired sparklines) ----------------------
+//   sparkState  – which state-id feeds the inline sparkline
+//   sparkOpts   – passed through to renderSpark
+const RELAYS = [
+  {id: "ln2_valve",       state: "ln2_valve_open",                 label: "LN₂ valve",
+   danger: true,  sparkState: "res1",          sparkOpts: {color:"#58a6ff"}},
+  {id: "gn2_valve",       state: "gn2_valve_open",                 label: "GN₂ valve",
+   danger: false, sparkState: "room_humidity", sparkOpts: {color:"#3fb950"}},
+  {id: "pressure_sensor", state: "pressure_sensor_relay_open",     label: "Pressure sensor",
+   danger: false, sparkState: "frg1",          sparkOpts: {color:"#f85149", log:true}},
+];
+
+let relaysBuilt = false;
+function buildRelays(){
+  $("relays").innerHTML = RELAYS.map(r => `
+    <div class="blk">
+      <div class="row">
+        <span class="title" style="min-width:8.5rem">${r.label}</span>
+        <span class="kv"><span class="k">actual</span><span class="dot" id="rd-${r.id}"></span><span id="rv-${r.id}" class="num">–</span></span>
+        <span style="flex:1"></span>
+        <button id="ro-${r.id}" class="${r.danger ? 'warn' : ''}" onclick="relayOpen('${r.id}', ${r.danger})">open</button>
+        <button id="rc-${r.id}" onclick="relayClose('${r.id}')">close</button>
+        <span id="rm-${r.id}" class="cur" style="min-width:5rem"></span>
+      </div>
+      <div class="row" style="gap:.6rem; margin-top:.15rem">
+        <span class="lbl" style="min-width:8.5rem; font-size:.78rem">${r.sparkLabel || sparkLabelFor(r)}</span>
+        <svg id="sp-${r.id}" width="240" height="40" viewBox="0 0 240 40" preserveAspectRatio="none"
+             style="background:rgba(255,255,255,.03); border-radius:4px; flex:1; max-width:360px"></svg>
+        <span id="sv-${r.id}" class="num cur" style="min-width:6rem; text-align:right"></span>
+      </div>
+    </div>`).join("");
+  relaysBuilt = true;
+}
+function sparkLabelFor(r){
+  return {res1:"RES1 level (V)", room_humidity:"humidity (%RH)", frg1:"FRG1 vacuum (mbar, log)"}[r.sparkState] || r.sparkState;
+}
+function relayOpen(name, confirmFirst){
+  if (confirmFirst && !confirm(`Open ${name}? This actuates a real valve.`)) return;
+  cmd(`ets/commands/relay/${name}`, {action: "open"})
+    .then(ok => flash(`rm-${name}`, ok ? "sent: open" : "FAILED", ok ? "" : "stale"));
+}
+function relayClose(name){
+  cmd(`ets/commands/relay/${name}`, {action: "close"})
+    .then(ok => flash(`rm-${name}`, ok ? "sent: close" : "FAILED", ok ? "" : "stale"));
+}
+function updateRelays(){
+  for (const r of RELAYS){
+    const st = S(r.state);
+    const isOpen = st && st.value === true;
+    const dot = $("rd-" + r.id); if (dot) dot.className = "dot" + (isOpen ? " open" : isOpen === false ? " on" : "");
+    const v = $("rv-" + r.id); if (v) v.textContent = !st || st.value === null ? "–" : (isOpen ? "OPEN" : "closed");
+    // Paired sparkline
+    renderSpark("sp-" + r.id, r.sparkState, r.sparkOpts || {});
+    const lastV = bufLast(r.sparkState);
+    const sv = $("sv-" + r.id);
+    if (sv) sv.textContent = lastV == null ? "–" : fmtNum(lastV);
+  }
+}
+
+// ---- LakeShore loop 1 ------------------------------------------------------
+const LS_OUTMODE_NAMES = {0:"Off", 1:"Closed Loop", 2:"Zone", 3:"Open Loop", 4:"Monitor", 5:"Warmup"};
+const LS_RANGE_NAMES   = {0:"Off", 1:"R1 (low)", 2:"R2", 3:"R3", 4:"R4", 5:"R5 (high)"};
+
+function setPlaceholder(id, val){
+  const e = $(id);
+  if (e && document.activeElement !== e && e.value === "")
+    e.placeholder = (val == null ? "" : fmtNum(val));
+}
+
+function updateLakeShore(){
+  const rtda = S("rtd_a"), sp = S("heater_setpoint"), out = S("heater_output");
+  const p = S("heater_kp"), i = S("heater_ki"), d = S("heater_kd");
+  const rng = S("heater_range"), om = S("heater_outmode"), mout = S("heater_mout");
+  const ron = S("heater_ramp_on"), rrate = S("heater_ramp_rate"), rst = S("heater_ramping");
+
+  $("ls-rtda").textContent = rtda && rtda.value != null ? fmtNum(rtda.value) : "–";
+  $("ls-sp").textContent   = sp   && sp.value   != null ? fmtNum(sp.value)   : "–";
+  $("ls-out").textContent  = out  && out.value  != null ? fmtNum(out.value)  : "–";
+
+  $("ls-om-txt").textContent  = om  && om.value  != null ? `${LS_OUTMODE_NAMES[om.value] ?? "?"} (${om.value})` : "–";
+  $("ls-rng-txt").textContent = rng && rng.value != null ? `${LS_RANGE_NAMES[rng.value]   ?? "?"} (${rng.value})` : "–";
+  $("ls-ramping").textContent = rst && rst.value != null ? (rst.value ? "yes" : "no") : "–";
+
+  // PID summary line + placeholders
+  const pidTxt = [p, i, d].map(s => s && s.value != null ? fmtNum(s.value) : "–").join(" / ");
+  $("ls-pid-cur").textContent = `P/I/D = ${pidTxt}`;
+  setPlaceholder("ls-p-in", p && p.value);
+  setPlaceholder("ls-i-in", i && i.value);
+  setPlaceholder("ls-d-in", d && d.value);
+
+  // Range + outmode dropdowns: reflect current value if not focused
+  syncSelect("ls-rng-in", rng && rng.value);
+  syncSelect("ls-om-in",  om  && om.value);
+
+  // Manual output placeholder
+  setPlaceholder("ls-mout-in", mout && mout.value);
+
+  // Ramp on/off button highlight + rate placeholder
+  $("ls-ramp-on").className  = ron && ron.value ? "on" : "";
+  $("ls-ramp-off").className = ron && ron.value === false ? "on" : "";
+  setPlaceholder("ls-ramp-in", rrate && rrate.value);
+}
+function syncSelect(id, val){
+  const el = $(id);
+  if (!el || val == null) return;
+  if (document.activeElement === el) return;          // don't fight the operator
+  const want = String(val);
+  if (el.value !== want) el.value = want;
+}
+
+function setLakeShoreSetpoint(){
+  const v = parseFloat($("ls-sp-in").value);
+  if (Number.isNaN(v)){ flash("ls-msg", "enter a number", "stale"); return; }
+  if (!confirm(`Set LakeShore loop 1 setpoint to ${v} K?`)) return;
+  cmd("ets/commands/lakeshore/setpoint", {value: v, loop: 1})
+    .then(ok => flash("ls-msg", ok ? `sent: ${v} K` : "FAILED", ok ? "" : "stale"));
+}
+function setLakeShorePID(){
+  // Fall back to current readback if a field is left empty
+  const cur = {p: S("heater_kp")?.value, i: S("heater_ki")?.value, d: S("heater_kd")?.value};
+  const parse = (id, fallback) => {
+    const raw = $(id).value;
+    if (raw === "") return fallback;
+    const v = parseFloat(raw);
+    return Number.isNaN(v) ? null : v;
+  };
+  const p = parse("ls-p-in", cur.p), i = parse("ls-i-in", cur.i), d = parse("ls-d-in", cur.d);
+  if (p == null || i == null || d == null){ flash("ls-pid-msg", "bad number", "stale"); return; }
+  cmd("ets/commands/lakeshore/pid", {output: 1, p, i, d})
+    .then(ok => flash("ls-pid-msg", ok ? `sent: ${fmtNum(p)}/${fmtNum(i)}/${fmtNum(d)}` : "FAILED", ok ? "" : "stale"));
+}
+function setLakeShoreRange(){
+  const r = parseInt($("ls-rng-in").value, 10);
+  if (Number.isNaN(r)){ flash("ls-rng-msg", "pick a value", "stale"); return; }
+  if (r >= 4 && !confirm(`Set heater range to ${r} (${LS_RANGE_NAMES[r]})? This delivers significant heater power.`)) return;
+  cmd("ets/commands/lakeshore/range", {output: 1, range: r})
+    .then(ok => flash("ls-rng-msg", ok ? `sent: range ${r}` : "FAILED", ok ? "" : "stale"));
+}
+function setLakeShoreOutMode(){
+  const m = parseInt($("ls-om-in").value, 10);
+  if (Number.isNaN(m)){ flash("ls-om-msg", "pick a mode", "stale"); return; }
+  cmd("ets/commands/lakeshore/outmode", {output: 1, mode: m})
+    .then(ok => flash("ls-om-msg", ok ? `sent: mode ${m} (${LS_OUTMODE_NAMES[m]})` : "FAILED", ok ? "" : "stale"));
+}
+function setLakeShoreMout(){
+  const v = parseFloat($("ls-mout-in").value);
+  if (Number.isNaN(v) || v < 0 || v > 100){ flash("ls-mout-msg", "0–100", "stale"); return; }
+  cmd("ets/commands/lakeshore/mout", {output: 1, value: v})
+    .then(ok => flash("ls-mout-msg", ok ? `sent: ${v}%` : "FAILED", ok ? "" : "stale"));
+}
+function setLakeShoreRamp(on){
+  // Toggle just the on/off; keep current rate (read back from snapshot)
+  const rate = S("heater_ramp_rate")?.value ?? 1.0;
+  cmd("ets/commands/lakeshore/ramp", {output: 1, on, rate})
+    .then(ok => flash("ls-ramp-msg", ok ? `sent: ramp ${on ? "ON" : "OFF"}` : "FAILED", ok ? "" : "stale"));
+}
+function applyLakeShoreRamp(){
+  const rate = parseFloat($("ls-ramp-in").value);
+  if (Number.isNaN(rate) || rate < 0.1 || rate > 100){ flash("ls-ramp-msg", "rate 0.1–100", "stale"); return; }
+  // Apply rate alongside current on/off state
+  const on = !!S("heater_ramp_on")?.value;
+  cmd("ets/commands/lakeshore/ramp", {output: 1, on, rate})
+    .then(ok => flash("ls-ramp-msg", ok ? `sent: rate ${rate} K/min` : "FAILED", ok ? "" : "stale"));
+}
+
+// ---- Autovalve ------------------------------------------------------------
+function updateAutovalve(){
+  const st = S("autovalve_state"), mo = S("autovalve_mode"), en = S("autovalve_enabled");
+  $("av-state").textContent = st && st.value != null ? String(st.value) : "–";
+  $("av-mode").textContent  = mo && mo.value != null ? String(mo.value) : "–";
+  $("av-en").textContent    = en && en.value != null ? (en.value ? "yes" : "no") : "–";
+  // Highlight enable/disable per the enabled flag
+  const isEnabled = en && en.value === true;
+  $("av-en-on").className   = isEnabled ? "on" : "";
+  $("av-en-off").className  = isEnabled === false ? "warn" : "danger";
+  // Highlight trigger mode (only meaningful when enabled)
+  const m = mo && mo.value;
+  $("av-m-grad").className   = m === "gradient"  ? "on" : "";
+  $("av-m-thresh").className = m === "threshold" ? "on" : "";
+}
+function setAutovalveMode(mode){
+  cmd("ets/commands/autovalve/mode", {mode});
+}
+function setAutovalveEnabled(on){
+  // Controller treats {mode:"auto"} as enable, {mode:"manual"} as disable+close.
+  if (!on && !confirm("Disable autovalve? This also closes the LN₂ valve.")) return;
+  cmd("ets/commands/autovalve/mode", {mode: on ? "auto" : "manual"});
+}
+
+// ---- Humidity PID ---------------------------------------------------------
+function updateHumidity(){
+  const m = S("humidity_pid_measured"), sp = S("humidity_pid_setpoint"), d = S("humidity_pid_duty_cycle");
+  $("h-m").textContent    = m  && m.value  != null ? fmtNum(m.value)  : "–";
+  $("h-sp").textContent   = sp && sp.value != null ? fmtNum(sp.value) : "–";
+  $("h-duty").textContent = d  && d.value  != null ? fmtNum(d.value)  : "–";
+  // Bigger graph: room_humidity over time with current setpoint as reference
+  renderSpark("h-graph", "room_humidity", {color: "#58a6ff", refLine: sp && sp.value});
+}
+function setHumiditySetpoint(){
+  const v = parseFloat($("h-sp-in").value);
+  if (Number.isNaN(v)){ flash("h-msg", "enter a number", "stale"); return; }
+  cmd("ets/commands/humidity/setpoint", {value: v})
+    .then(ok => flash("h-msg", ok ? `sent: ${v} %RH` : "FAILED", ok ? "" : "stale"));
+}
+
+// ---- Top-of-page pills ----------------------------------------------------
+function svcPill(el, st, label, okText){
+  if (!st){ el.textContent = label+" …"; el.className = "pill mut"; return; }
+  if (st.value === null || st.freshness === "invalid"){ el.textContent = label+": ?"; el.className = "pill bad"; return; }
+  const ok = !!st.value;
+  el.textContent = label+": "+(ok ? okText : "DOWN");
+  el.className = "pill " + (ok ? (st.freshness==="stale"?"warn":"ok") : "bad");
+}
+
+// ---- main tick ------------------------------------------------------------
+// States we keep a rolling history of for sparklines / graphs
+const PLOT_STATES = ["res1", "room_humidity", "frg1"];
+async function tick(){
+  let d;
+  try { d = await (await fetch("/api/state")).json(); }
+  catch(e){ $("p-mq").textContent="mqtt: page can't reach server"; $("p-mq").className="pill bad"; return; }
+  SNAP = d.snapshot || {states:{}};
+  if (!relaysBuilt) buildRelays();
+
+  // Feed the rolling buffers for plotted states.  Use the snapshot's
+  // generated_at as the timestamp so all series share a coherent clock; the
+  // first valid sample bootstraps the buffer.
+  const tNow = (SNAP.generated_at ? SNAP.generated_at * 1000 : Date.now());
+  for (const sid of PLOT_STATES){
+    const s = SNAP.states && SNAP.states[sid];
+    if (s && s.value != null && s.freshness !== "invalid") bufAppend(sid, tNow, s.value);
+  }
+
+  // header pills
+  svcPill($("p-svc"), S("service_alive"), "service", "alive");
+  const ilk = S("interlocks_ok");
+  if (ilk && ilk.value !== null && ilk.freshness !== "invalid"){
+    const ok = !!ilk.value;
+    $("p-ilk").textContent = "interlocks: "+(ok ? "OK" : "ALERT");
+    $("p-ilk").className = "pill " + (ok ? "ok" : "bad");
+  } else { $("p-ilk").textContent = "interlocks: ?"; $("p-ilk").className = "pill mut"; }
+  $("p-mq").textContent = "mqtt: "+(d.mqtt_connected ? "connected" : "DOWN");
+  $("p-mq").className = "pill " + (d.mqtt_connected ? "ok" : "bad");
+
+  updateRelays();
+  updateLakeShore();
+  updateAutovalve();
+  updateHumidity();
+}
+tick(); setInterval(tick, 1500);
+</script>
+</body>
+</html>

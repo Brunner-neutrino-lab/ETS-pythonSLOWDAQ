@@ -1,0 +1,267 @@
+# ETS slow-control — state registry ("proprioception layer")
+#
+# Single source of truth for what states the system has.  The StateStore
+# (slowcontrol/state/store.py) reads this file, subscribes to the `source`
+# topics, computes per-state freshness, keeps moving averages for the analog
+# states, and republishes the whole thing (retained) on
+# ets/state/snapshot.  The webcontrol GUI renders its read-out and — where
+# `control:` is present — its control widgets from here.
+#
+# Field reference: see _legacy/xsphere-slow-control/slowcontrol/state.yaml
+# header comment.  Layered defaults: hard-coded < `defaults:` block < entry.
+
+defaults:
+  analog: {period_s: 1.0, stale_factor: 1.5, invalid_factor: 5.0, avg_windows_s: [60]}
+  binary: {period_s: 5.0}
+  enum:   {period_s: 5.0}
+  text:   {period_s: 5.0}
+
+groups:
+
+  # ── Service heartbeat ───────────────────────────────────────────────────
+  service:
+    service_alive:
+      kind: binary
+      label: "slow-control service heartbeat"
+      source: {topic: ets/status/service/heartbeat, presence: true}
+      period_s: 12     # service publishes every 10 s
+
+  # ── LakeShore 350 RTDs (K) and LabJack thermocouples (°C) ──────────────
+  temperature:
+    rtd_a:
+      kind: analog
+      unit: K
+      label: "LakeShore RTD A"
+      source: {topic: ets/sensors/lakeshore/rtd/A, key: value}
+    rtd_b:
+      kind: analog
+      unit: K
+      label: "LakeShore RTD B"
+      source: {topic: ets/sensors/lakeshore/rtd/B, key: value}
+    rtd_c:
+      kind: analog
+      unit: K
+      label: "LakeShore RTD C"
+      source: {topic: ets/sensors/lakeshore/rtd/C, key: value}
+    rtd_d:
+      kind: analog
+      unit: K
+      label: "LakeShore RTD D"
+      source: {topic: ets/sensors/lakeshore/rtd/D, key: value}
+    lm35_1:
+      kind: analog
+      unit: "°C"
+      label: "LM35 #1 (on LabJack)"
+      source: {topic: ets/sensors/labjack_tc/K1, key: value}
+    lm35_2:
+      kind: analog
+      unit: "°C"
+      label: "LM35 #2 (on CB37 breakout)"
+      source: {topic: ets/sensors/labjack_tc/K2, key: value}
+    tc_1:
+      kind: analog
+      unit: "°C"
+      label: "T-type TC1"
+      source: {topic: ets/sensors/labjack_tc/TC1, key: value}
+    tc_2:
+      kind: analog
+      unit: "°C"
+      label: "T-type TC2"
+      source: {topic: ets/sensors/labjack_tc/TC2, key: value}
+    tc_3:
+      kind: analog
+      unit: "°C"
+      label: "T-type TC3"
+      source: {topic: ets/sensors/labjack_tc/TC3, key: value}
+    tc_4:
+      kind: analog
+      unit: "°C"
+      label: "T-type TC4"
+      source: {topic: ets/sensors/labjack_tc/TC4, key: value}
+    tc_5:
+      kind: analog
+      unit: "°C"
+      label: "T-type TC5"
+      source: {topic: ets/sensors/labjack_tc/TC5, key: value}
+
+  # ── LakeShore loop 1 — readouts + control parameters ──────────────────
+  heater:
+    heater_output:
+      kind: analog
+      unit: "%"
+      label: "Heater 1 output"
+      source: {topic: ets/sensors/lakeshore/heater/1, key: value}
+    heater_setpoint:
+      kind: analog
+      unit: K
+      label: "Loop 1 setpoint"
+      source: {topic: ets/sensors/lakeshore/setpoint/1, key: value}
+    heater_kp:
+      kind: analog
+      label: "PID P (proportional)"
+      source: {topic: ets/sensors/lakeshore/pid_p/1, key: value}
+      period_s: 7      # slow-poll cycle is 5 s
+    heater_ki:
+      kind: analog
+      label: "PID I (integral / reset)"
+      source: {topic: ets/sensors/lakeshore/pid_i/1, key: value}
+      period_s: 7
+    heater_kd:
+      kind: analog
+      label: "PID D (derivative / rate)"
+      source: {topic: ets/sensors/lakeshore/pid_d/1, key: value}
+      period_s: 7
+    heater_range:
+      kind: analog          # 0=Off, 1..5=power range (output 1)
+      label: "Heater range (0=Off · 1=low … 5=high)"
+      source: {topic: ets/sensors/lakeshore/range/1, key: value}
+      period_s: 7
+    heater_mout:
+      kind: analog
+      unit: "%"
+      label: "Manual heater output"
+      source: {topic: ets/sensors/lakeshore/mout/1, key: value}
+      period_s: 7
+    heater_outmode:
+      kind: analog          # 0=Off · 1=Closed Loop · 2=Zone · 3=Open Loop · 4=Monitor · 5=Warmup
+      label: "Output mode (0=Off · 1=ClosedLoop · 3=OpenLoop)"
+      source: {topic: ets/sensors/lakeshore/outmode/1, key: value}
+      period_s: 7
+    heater_ramp_on:
+      kind: binary
+      label: "Setpoint ramp enabled"
+      source: {topic: ets/sensors/lakeshore/ramp_on/1, key: value}
+      period_s: 7
+    heater_ramp_rate:
+      kind: analog
+      unit: "K/min"
+      label: "Setpoint ramp rate"
+      source: {topic: ets/sensors/lakeshore/ramp_rate/1, key: value}
+      period_s: 7
+    heater_ramping:
+      kind: binary
+      label: "Ramp in progress (RAMPST?)"
+      source: {topic: ets/sensors/lakeshore/rampst/1, key: value}
+      period_s: 7
+
+  # ── Vacuum gauge (Pirani/cold-cathode hybrid) ─────────────────────────
+  pressure:
+    frg1:
+      kind: analog
+      unit: mbar
+      label: "FRG1 (vacuum gauge)"
+      source: {topic: ets/sensors/labjack_res/FRG1, key: value}
+
+  # ── Cryostat liquid-level sensors (raw volts) ─────────────────────────
+  level:
+    res1:
+      kind: analog
+      unit: V
+      label: "RES1 level"
+      source: {topic: ets/sensors/labjack_res/RES1, key: value}
+    res2:
+      kind: analog
+      unit: V
+      label: "RES2 level"
+      source: {topic: ets/sensors/labjack_res/RES2, key: value}
+    res3:
+      kind: analog
+      unit: V
+      label: "RES3 level"
+      source: {topic: ets/sensors/labjack_res/RES3, key: value}
+    res4:
+      kind: analog
+      unit: V
+      label: "RES4 level"
+      source: {topic: ets/sensors/labjack_res/RES4, key: value}
+    res5:
+      kind: analog
+      unit: V
+      label: "RES5 level"
+      source: {topic: ets/sensors/labjack_res/RES5, key: value}
+    res6:
+      kind: analog
+      unit: V
+      label: "RES6 level"
+      source: {topic: ets/sensors/labjack_res/RES6, key: value}
+    res7:
+      kind: analog
+      unit: V
+      label: "RES7 (overfill sentinel)"
+      source: {topic: ets/sensors/labjack_res/RES7, key: value}
+
+  # ── Room environment (Arduino DHT over serial) ────────────────────────
+  environment:
+    room_humidity:
+      kind: analog
+      unit: "%RH"
+      label: "Room humidity"
+      source: {topic: ets/sensors/humidity/humidity, key: value}
+      period_s: 5.0
+    room_temperature:
+      kind: analog
+      unit: K
+      label: "Room temperature (DHT)"
+      source: {topic: ets/sensors/humidity/temperature, key: value}
+      period_s: 5.0
+
+  # ── GPIO relay states (open/closed reported by relay manager) ─────────
+  valve:
+    ln2_valve_open:
+      kind: binary
+      label: "LN₂ valve open"
+      source: {topic: ets/status/relays/ln2_valve, key: state}
+      period_s: null   # retained status; never auto-stales
+    gn2_valve_open:
+      kind: binary
+      label: "GN₂ valve open"
+      source: {topic: ets/status/relays/gn2_valve, key: state}
+      period_s: null
+    pressure_sensor_relay_open:
+      kind: binary
+      label: "Pressure-sensor relay open"
+      source: {topic: ets/status/relays/pressure_sensor, key: state}
+      period_s: null
+
+  # ── Controller status ─────────────────────────────────────────────────
+  controller:
+    autovalve_state:
+      kind: enum
+      label: "Autovalve state"
+      values: [WAITING, FILLING, COOLDOWN, OVERFILL, DISABLED]
+      source: {topic: ets/status/autovalve, key: state}
+      period_s: null
+    autovalve_mode:
+      kind: enum
+      label: "Autovalve mode"
+      values: [gradient, threshold, manual]
+      source: {topic: ets/status/autovalve, key: mode}
+      period_s: null
+    autovalve_enabled:
+      kind: binary
+      label: "Autovalve enabled"
+      source: {topic: ets/status/autovalve, key: enabled}
+      period_s: null
+    humidity_pid_setpoint:
+      kind: analog
+      unit: "%RH"
+      label: "Humidity PID setpoint"
+      source: {topic: ets/status/humidity_pid, key: setpoint}
+      period_s: null
+    humidity_pid_measured:
+      kind: analog
+      unit: "%RH"
+      label: "Humidity PID measured"
+      source: {topic: ets/status/humidity_pid, key: measured}
+      period_s: 30     # the PID republishes when humidity sensor ticks (~5 s)
+    humidity_pid_duty_cycle:
+      kind: analog
+      unit: ""
+      label: "Humidity PID duty cycle"
+      source: {topic: ets/status/humidity_pid, key: duty_cycle}
+      period_s: 30
+    interlocks_ok:
+      kind: binary
+      label: "Interlocks OK"
+      source: {topic: ets/status/interlocks, key: all_ok}
+      period_s: null

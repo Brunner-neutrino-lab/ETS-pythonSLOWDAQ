@@ -89,6 +89,7 @@ class HumidityController(Controller):
             self._setpoint = float(value)
             self._pid.setpoint = self._setpoint
             log.info("Humidity setpoint → %.1f%%", self._setpoint)
+            self.publish_status()
 
     # ── duty-cycle loop ────────────────────────────────────────
 

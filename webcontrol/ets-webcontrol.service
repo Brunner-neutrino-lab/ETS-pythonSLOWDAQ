@@ -1,0 +1,34 @@
+# systemd unit for the ETS web control panel (Flask + paho-mqtt).
+#
+# Install:
+#   sudo cp webcontrol/ets-webcontrol.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now ets-webcontrol
+#
+# Then browse to  http://<pi>:8088/
+# Logs:  journalctl -u ets-webcontrol -f
+
+[Unit]
+Description=ETS Web Control Panel
+After=network-online.target mosquitto.service ets-slowcontrol.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/ETS-pythonSLOWDAQ
+ExecStart=/home/pi/ETS-pythonSLOWDAQ/venv/bin/python -u webcontrol/app.py
+Environment=PYTHONUNBUFFERED=1
+Environment=ETS_MQTT_HOST=localhost
+Environment=ETS_MQTT_PORT=1883
+Environment=ETS_WEB_PORT=8088
+# Credentials (ETS_WEB_USER, ETS_WEB_PASS, ETS_MQTT_USER, ETS_MQTT_PASS).
+# File must be readable by user=pi (chmod 640 root:pi).
+EnvironmentFile=-/etc/ets-slowcontrol/secrets.env
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

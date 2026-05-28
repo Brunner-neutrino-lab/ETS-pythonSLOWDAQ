@@ -22,6 +22,8 @@ class MQTTClient:
         broker: str = "localhost",
         port: int = 1883,
         client_id: str = "ets-slowcontrol",
+        username: str | None = None,
+        password: str | None = None,
     ):
         self._broker = broker
         self._port = port
@@ -29,6 +31,8 @@ class MQTTClient:
             callback_api_version=mqtt.CallbackAPIVersion.VERSION1,
             client_id=client_id,
         )
+        if username:
+            self._client.username_pw_set(username, password or "")
         self._client.on_connect = self._on_connect
         self._client.on_disconnect = self._on_disconnect
         self._client.on_message = self._on_message

@@ -1,0 +1,413 @@
+{
+  "title": "ETS Slow Control",
+  "uid": "ets-slowcontrol",
+  "tags": ["ets", "slowcontrol"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "refresh": "10s",
+  "time": { "from": "now-3h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "DS_INFLUX",
+        "type": "datasource",
+        "query": "influxdb",
+        "current": { "text": "InfluxDB", "value": "InfluxDB" },
+        "hide": 0
+      }
+    ]
+  },
+  "panels": [
+
+    { "type": "row", "title": "Dewar levels", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }, "collapsed": false },
+
+    {
+      "type": "timeseries",
+      "title": "Liquid level (RES1–RES6, bottom → top of dewar)",
+      "datasource": { "type": "influxdb", "uid": "${DS_INFLUX}" },
+      "gridPos": { "h": 9, "w": 16, "x": 0, "y": 1 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "volt",
+          "custom": { "drawStyle": "line", "showPoints": "never", "lineWidth": 1, "spanNulls": true }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["last", "min", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "influxdb", "uid": "${DS_INFLUX}" },
+          "query": "from(bucket: \"slowcontrol\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement =~ /^RES[1-6]$/ and r._field == \"value\")\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)\n  |> keep(columns: [\"_time\", \"_value\", \"_measurement\"])\n  |> rename(columns: {_measurement: \"series\"})\n  |> group(columns: [\"series\"])"
+        }
+      ]
+    },
+
+    {
+      "type": "timeseries",
+      "title": "Overfill sentinel (RES7)",
+      "datasource": { "type": "influxdb", "uid": "${DS_INFLUX}" },
+      "gridPos": { "h": 9, "w": 8, "x": 16, "y": 1 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "volt",
+          "min": 0, "max": 10,
+          "custom": { "drawStyle": "line", "showPoints": "never", "lineWidth": 1, "fillOpacity": 8, "spanNulls": true,
+            "thresholdsStyle": { "mode": "line+area" }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green",  "value": null },
+              { "color": "orange", "value": 9.0 },
+              { "color": "red",    "value": 9.8 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "single" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "influxdb", "uid": "${DS_INFLUX}" },
+          "query": "from(bucket: \"slowcontrol\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"RES7\" and r._field == \"value\")\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)\n  |> keep(columns: [\"_time\", \"_value\"])"
+        }
+      ]
+    },
+
+    { "type": "row", "title": "Cryostat temperatures", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 10 }, "collapsed": false },
+
+    {
+      "type": "timeseries",
+      "title": "LakeShore RTDs (K)",
+      "datasource": { "type": "influxdb", "uid": "${DS_INFLUX}" },
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 11 },
+      "fieldConfig": {
+        "defaults": { "unit": "K", "custom": { "drawStyle": "line", "showPoints": "never", "lineWidth": 1, "spanNulls": true } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["last", "min", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "influxdb", "uid": "${DS_INFLUX}" },
+          "query": "from(bucket: \"slowcontrol\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"rtd\" and r._field == \"value\")\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)\n  |> keep(columns: [\"_time\", \"_value\", \"channel\"])\n  |> rename(columns: {channel: \"RTD\"})\n  |> group(columns: [\"RTD\"])"
+        }
+      ]
+    },
+
+    {
+      "type": "timeseries",
+      "title": "T-type thermocouples (°C) — TC4/TC5 hidden when disconnected",
+      "datasource": { "type": "influxdb", "uid": "${DS_INFLUX}" },
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 11 },
+      "fieldConfig": {
+        "defaults": { "unit": "celsius", "custom": { "drawStyle": "line", "showPoints": "never", "lineWidth": 1, "spanNulls": true } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["last", "min", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "influxdb", "uid": "${DS_INFLUX}" },
+          "query": "from(bucket: \"slowcontrol\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement =~ /^TC[1-5]$/ and r._field == \"value\")\n  // Hide disconnected channels (LabJack returns ~-10272 °C when no TC is wired)\n  |> filter(fn: (r) => r._value > -100.0 and r._value < 200.0)\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)\n  |> keep(columns: [\"_time\", \"_value\", \"_measurement\"])\n  |> rename(columns: {_measurement: \"TC\"})\n  |> group(columns: [\"TC\"])"
+        }
+      ]
+    },
+
+    { "type": "row", "title": "LM35 sensors, vacuum, heater", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 20 }, "collapsed": false },
+
+    {
+      "type": "timeseries",
+      "title": "LM35 temperature sensors (°C)",
+      "datasource": { "type": "influxdb", "uid": "${DS_INFLUX}" },
+      "gridPos": { "h": 9, "w": 8, "x": 0, "y": 21 },
+      "fieldConfig": {
+        "defaults": { "unit": "celsius", "custom": { "drawStyle": "line", "showPoints": "never", "lineWidth": 1, "spanNulls": true } },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "K1" }, "properties": [{ "id": "displayName", "value": "LM35 #1 (LabJack)" }] },
+          { "matcher": { "id": "byName", "options": "K2" }, "properties": [{ "id": "displayName", "value": "LM35 #2 (CB37)" }] }
+        ]
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "calcs": ["last"] }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "influxdb", "uid": "${DS_INFLUX}" },
+          "query": "from(bucket: \"slowcontrol\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => (r._measurement == \"K1\" or r._measurement == \"K2\") and r._field == \"value\")\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)\n  |> keep(columns: [\"_time\", \"_value\", \"_measurement\"])\n  |> group(columns: [\"_measurement\"])"
+        }
+      ]
+    },
+
+    {
+      "type": "timeseries",
+      "title": "Vacuum gauge FRG1 (mbar, log)",
+      "datasource": { "type": "influxdb", "uid": "${DS_INFLUX}" },
+      "gridPos": { "h": 9, "w": 8, "x": 8, "y": 21 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "pressurembar",
+          "custom": { "drawStyle": "line", "showPoints": "never", "lineWidth": 1, "spanNulls": true, "scaleDistribution": { "type": "log", "log": 10 } }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "calcs": ["last"] }, "tooltip": { "mode": "single" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "influxdb", "uid": "${DS_INFLUX}" },
+          "query": "from(bucket: \"slowcontrol\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"FRG1\" and r._field == \"value\")\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)\n  |> keep(columns: [\"_time\", \"_value\"])"
+        }
+      ]
+    },
+
+    {
+      "type": "timeseries",
+      "title": "LakeShore loop 1 — heater % (left) & setpoint K (right)",
+      "datasource": { "type": "influxdb", "uid": "${DS_INFLUX}" },
+      "gridPos": { "h": 9, "w": 8, "x": 16, "y": 21 },
+      "fieldConfig": {
+        "defaults": { "custom": { "drawStyle": "line", "showPoints": "never", "lineWidth": 1, "spanNulls": true } },
+        "overrides": [
+          { "matcher": { "id": "byFrameRefID", "options": "A" }, "properties": [
+            { "id": "unit", "value": "percent" }, { "id": "displayName", "value": "heater output (%)" }
+          ] },
+          { "matcher": { "id": "byFrameRefID", "options": "B" }, "properties": [
+            { "id": "unit", "value": "K" }, { "id": "displayName", "value": "setpoint (K)" },
+            { "id": "custom.axisPlacement", "value": "right" }
+          ] }
+        ]
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "calcs": ["last"] }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "influxdb", "uid": "${DS_INFLUX}" },
+          "query": "from(bucket: \"slowcontrol\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"heater\" and r._field == \"value\" and r.channel == \"1\")\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)\n  |> keep(columns: [\"_time\", \"_value\"])"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "influxdb", "uid": "${DS_INFLUX}" },
+          "query": "from(bucket: \"slowcontrol\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"setpoint\" and r._field == \"value\" and r.channel == \"1\")\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)\n  |> keep(columns: [\"_time\", \"_value\"])"
+        }
+      ]
+    },
+
+    { "type": "row", "title": "Valve states", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 30 }, "collapsed": false },
+
+    {
+      "type": "state-timeline",
+      "title": "Valve state (open / closed)",
+      "datasource": { "type": "influxdb", "uid": "${DS_INFLUX}" },
+      "gridPos": { "h": 7, "w": 24, "x": 0, "y": 31 },
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "lineWidth": 0, "fillOpacity": 80 },
+          "mappings": [
+            { "type": "value", "options": { "open":   { "color": "red",   "index": 0 } } },
+            { "type": "value", "options": { "closed": { "color": "green", "index": 1 } } }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "showValue": "auto",
+        "alignValue": "center",
+        "rowHeight": 0.9,
+        "mergeValues": true,
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "single" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "influxdb", "uid": "${DS_INFLUX}" },
+          "query": "from(bucket: \"slowcontrol\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement =~ /^(ln2_valve|gn2_valve|pressure_sensor)$/ and r._field == \"state\")\n  |> keep(columns: [\"_time\", \"_value\", \"_measurement\"])\n  |> rename(columns: {_measurement: \"valve\"})\n  |> group(columns: [\"valve\"])"
+        }
+      ]
+    },
+
+    { "type": "row", "title": "Humidity (with GN₂ valve activity)", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 38 }, "collapsed": false },
+
+    {
+      "type": "timeseries",
+      "title": "Room humidity (%RH) + PID setpoint",
+      "datasource": { "type": "influxdb", "uid": "${DS_INFLUX}" },
+      "gridPos": { "h": 8, "w": 18, "x": 0, "y": 39 },
+      "fieldConfig": {
+        "defaults": { "unit": "humidity", "custom": { "drawStyle": "line", "showPoints": "never", "lineWidth": 1, "spanNulls": true } },
+        "overrides": [
+          { "matcher": { "id": "byFrameRefID", "options": "B" }, "properties": [
+            { "id": "displayName", "value": "setpoint" },
+            { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 6] } },
+            { "id": "color", "value": { "mode": "fixed", "fixedColor": "orange" } }
+          ] }
+        ]
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "calcs": ["last"] }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "influxdb", "uid": "${DS_INFLUX}" },
+          "query": "from(bucket: \"slowcontrol\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"humidity\" and r._field == \"value\")\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)\n  |> keep(columns: [\"_time\", \"_value\"])\n  |> set(key: \"_field\", value: \"measured\")"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "influxdb", "uid": "${DS_INFLUX}" },
+          "query": "from(bucket: \"slowcontrol\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"humidity_pid\" and r._field == \"setpoint\")\n  |> aggregateWindow(every: v.windowPeriod, fn: last, createEmpty: false)\n  |> keep(columns: [\"_time\", \"_value\"])"
+        }
+      ]
+    },
+
+    {
+      "type": "timeseries",
+      "title": "PID duty cycle",
+      "datasource": { "type": "influxdb", "uid": "${DS_INFLUX}" },
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 39 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit", "min": 0, "max": 1,
+          "custom": { "drawStyle": "line", "showPoints": "never", "lineWidth": 1, "fillOpacity": 20, "spanNulls": true }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "calcs": ["last", "mean"] }, "tooltip": { "mode": "single" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "influxdb", "uid": "${DS_INFLUX}" },
+          "query": "from(bucket: \"slowcontrol\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"humidity_pid\" and r._field == \"duty_cycle\")\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)\n  |> keep(columns: [\"_time\", \"_value\"])"
+        }
+      ]
+    },
+
+    {
+      "type": "state-timeline",
+      "title": "GN₂ valve activity (under humidity panel)",
+      "datasource": { "type": "influxdb", "uid": "${DS_INFLUX}" },
+      "gridPos": { "h": 3, "w": 24, "x": 0, "y": 47 },
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "lineWidth": 0, "fillOpacity": 80 },
+          "mappings": [
+            { "type": "value", "options": { "open":   { "color": "blue",      "index": 0 } } },
+            { "type": "value", "options": { "closed": { "color": "dark-gray", "index": 1 } } }
+          ]
+        },
+        "overrides": []
+      },
+      "options": { "showValue": "never", "alignValue": "center", "rowHeight": 0.9, "mergeValues": true,
+                   "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "single" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "influxdb", "uid": "${DS_INFLUX}" },
+          "query": "from(bucket: \"slowcontrol\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"gn2_valve\" and r._field == \"state\")\n  |> keep(columns: [\"_time\", \"_value\"])"
+        }
+      ]
+    },
+
+    { "type": "row", "title": "System status", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 50 }, "collapsed": false },
+
+    {
+      "type": "stat",
+      "title": "Interlocks",
+      "datasource": { "type": "influxdb", "uid": "${DS_INFLUX}" },
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 51 },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "1": { "text": "OK",    "color": "green" } } },
+            { "type": "value", "options": { "0": { "text": "ALERT", "color": "red"   } } }
+          ],
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "red",   "value": null },
+            { "color": "green", "value": 0.5 }
+          ] }
+        },
+        "overrides": []
+      },
+      "options": { "graphMode": "none", "colorMode": "background", "textMode": "value", "reduceOptions": { "calcs": ["lastNotNull"], "values": false } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "influxdb", "uid": "${DS_INFLUX}" },
+          "query": "from(bucket: \"slowcontrol\")\n  |> range(start: 0)\n  |> filter(fn: (r) => r._measurement == \"interlocks\" and r._field == \"all_ok\")\n  |> keep(columns: [\"_time\", \"_value\"])\n  |> last()"
+        }
+      ]
+    },
+
+    {
+      "type": "stat",
+      "title": "Service uptime",
+      "datasource": { "type": "influxdb", "uid": "${DS_INFLUX}" },
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 51 },
+      "fieldConfig": {
+        "defaults": { "unit": "s", "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] }
+        },
+        "overrides": []
+      },
+      "options": { "graphMode": "area", "colorMode": "value", "textMode": "value_and_name", "reduceOptions": { "calcs": ["lastNotNull"], "values": false } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "influxdb", "uid": "${DS_INFLUX}" },
+          "query": "from(bucket: \"slowcontrol\")\n  |> range(start: 0)\n  |> filter(fn: (r) => r._measurement == \"heartbeat\" and r._field == \"uptime\")\n  |> keep(columns: [\"_time\", \"_value\"])\n  |> last()"
+        }
+      ]
+    },
+
+    {
+      "type": "stat",
+      "title": "Autovalve state",
+      "datasource": { "type": "influxdb", "uid": "${DS_INFLUX}" },
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 51 },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "WAITING":  { "color": "blue"   } } },
+            { "type": "value", "options": { "FILLING":  { "color": "orange" } } },
+            { "type": "value", "options": { "COOLDOWN": { "color": "purple" } } },
+            { "type": "value", "options": { "OVERFILL": { "color": "red"    } } },
+            { "type": "value", "options": { "DISABLED": { "color": "dark-gray" } } }
+          ],
+          "color": { "mode": "thresholds" }
+        },
+        "overrides": []
+      },
+      "options": { "graphMode": "none", "colorMode": "background", "textMode": "value", "reduceOptions": { "calcs": ["lastNotNull"], "values": false } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "influxdb", "uid": "${DS_INFLUX}" },
+          "query": "from(bucket: \"slowcontrol\")\n  |> range(start: 0)\n  |> filter(fn: (r) => r._measurement == \"autovalve\" and r._field == \"state\")\n  |> keep(columns: [\"_time\", \"_value\"])\n  |> last()"
+        }
+      ]
+    },
+
+    {
+      "type": "stat",
+      "title": "Autovalve mode",
+      "datasource": { "type": "influxdb", "uid": "${DS_INFLUX}" },
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 51 },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }] }
+        },
+        "overrides": []
+      },
+      "options": { "graphMode": "none", "colorMode": "background", "textMode": "value", "reduceOptions": { "calcs": ["lastNotNull"], "values": false } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "influxdb", "uid": "${DS_INFLUX}" },
+          "query": "from(bucket: \"slowcontrol\")\n  |> range(start: 0)\n  |> filter(fn: (r) => r._measurement == \"autovalve\" and r._field == \"mode\")\n  |> keep(columns: [\"_time\", \"_value\"])\n  |> last()"
+        }
+      ]
+    }
+
+  ]
+}

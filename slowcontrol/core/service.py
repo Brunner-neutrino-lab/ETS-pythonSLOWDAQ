@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import signal
 import threading
 import time
@@ -18,6 +19,8 @@ from slowcontrol.core.registry import (
 )
 from slowcontrol.controllers.base import Controller
 from slowcontrol.drivers.base import SensorDriver
+from slowcontrol.state import SchemaError, default_schema_path, load_state_schema
+from slowcontrol.state.store import StateStore
 
 log = logging.getLogger(__name__)
 
@@ -26,15 +29,22 @@ class SlowControlService:
     """Top-level service that owns all drivers, relays, and controllers."""
 
     def __init__(self, config_path: str | Path):
+        self._config_path = str(config_path)
         self.config = AppConfig.from_yaml(config_path)
+        # MQTT credentials come from environment (set via systemd
+        # EnvironmentFile=/etc/ets-slowcontrol/secrets.env).  Empty values
+        # disable auth — the broker can still accept anonymous if allowed.
         self.mqtt = MQTTClient(
             broker=self.config.mqtt.broker,
             port=self.config.mqtt.port,
             client_id=self.config.mqtt.client_id,
+            username=os.environ.get("ETS_MQTT_USER") or None,
+            password=os.environ.get("ETS_MQTT_PASS") or None,
         )
         self.drivers: dict[str, SensorDriver] = {}
         self.controllers: dict[str, Controller] = {}
         self._relay_manager: Any = None
+        self._state_store: StateStore | None = None
         self._stop = threading.Event()
 
     # ── lifecycle ──────────────────────────────────────────────
@@ -44,6 +54,7 @@ class SlowControlService:
         self.mqtt.connect()
         self._start_relays()
         self._start_drivers()
+        self._start_state_store()
         self._start_controllers()
         self._start_interlocks()
         self._start_heartbeat()
@@ -54,6 +65,8 @@ class SlowControlService:
         self._stop.set()
         for ctrl in self.controllers.values():
             ctrl.stop()
+        if self._state_store is not None:
+            self._state_store.stop()
         for driver in self.drivers.values():
             driver.stop()
         if self._relay_manager:
@@ -109,6 +122,17 @@ class SlowControlService:
                 self.drivers[name] = driver
             except Exception:
                 log.exception("Failed to start driver '%s'", name)
+
+    def _start_state_store(self) -> None:
+        schema_path = default_schema_path(self._config_path)
+        try:
+            schema = load_state_schema(schema_path)
+        except SchemaError as exc:
+            log.warning("State layer disabled — %s", exc)
+            return
+        self._state_store = StateStore(self.config, self.mqtt, schema)
+        self._state_store.start()
+        log.info("State store started (%s)", schema_path)
 
     def _start_controllers(self) -> None:
         for name, ccfg in self.config.controllers.items():

@@ -1,0 +1,4 @@
+flask>=3.0
+waitress>=3.0
+paho-mqtt>=2.0
+markdown>=3.5

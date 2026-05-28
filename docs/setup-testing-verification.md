@@ -795,40 +795,77 @@ after timeout.  Both clear when conditions normalize.
 
 ---
 
-## 16. Test 11 — Node-RED dashboard
+## 16. Test 11 — Web control panel
 
-### 16a. Import the flow
+> Node-RED was decommissioned on 2026-05-25 in favour of a Flask-based control
+> panel that auto-renders from `state.yaml`.  The old `nodered/flows.json` is
+> kept in the repo as historical reference but the container is no longer
+> deployed.
 
-1. Open Node-RED at `http://<pi-ip>:1880`
-2. Menu → Import → select file → choose `nodered/flows.json`
-3. Click "Import"
-4. Click "Deploy"
+### 16a. Install and start
 
-### 16b. Open the dashboard
+```bash
+pip install -r webcontrol/requirements.txt
+sudo cp webcontrol/ets-webcontrol.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now ets-webcontrol
+systemctl status ets-webcontrol
+```
 
-Go to `http://<pi-ip>:1880/ui`
+### 16b. Open the pages
 
-You should see:
+| URL | Page |
+|-----|------|
+| `http://<pi-ip>:8088/` | **Register** — every state grouped by category, with freshness pills and 60 s averages on analog states |
+| `http://<pi-ip>:8088/control` | **Control** — relays, LakeShore loop 1, autovalve mode, humidity PID |
+| `http://<pi-ip>:8088/readme` | Repo README rendered in-browser |
 
-- **Relays group:** "LN2 OPEN" (red) and "LN2 CLOSE" (green) buttons
-- **Status group:** Autovalve state and service uptime
+The pages poll `/api/state` every 1.5 s, which serves the consolidated state
+snapshot the StateStore publishes on `ets/state/snapshot`.
 
-### 16c. Test buttons
+### 16c. Test relay buttons
 
-1. Click "LN2 OPEN" in the Node-RED dashboard
-2. In `mosquitto_sub`, verify:
-   ```
-   ets/commands/relay/ln2_valve {"action":"open"}
-   ```
-3. Listen for the relay click
-4. Click "LN2 CLOSE" and verify it closes
+On `/control`, click **Open** under "Pressure sensor" and verify in
+`mosquitto_sub`:
 
-### 16d. Verify status displays
+```
+ets/commands/relay/pressure_sensor {"action":"open"}
+ets/status/relays/pressure_sensor   {"state":"open", "ts": ...}
+```
 
-The autovalve state and uptime should update in real-time on the dashboard.
+The actual state in the page updates within ~1.5 s. Repeat with **Close**.
 
-**Pass criteria:** Node-RED buttons actuate relays via MQTT.  Status displays
-update from MQTT.
+LN₂ **Open** asks for a confirmation since it actuates the dewar transfer
+valve.
+
+### 16d. Test LakeShore controls
+
+The LakeShore card spans two columns and has separate apply blocks for
+setpoint, PID gains, heater range (with a confirmation prompt for range 4 or
+5), output mode, manual output, and setpoint ramp. Verify each by:
+
+1. Reading the current value in the header row of the card
+2. Entering the same value in the input (the field's placeholder text shows
+   the current value)
+3. Clicking Apply and checking the service log shows the SCPI write
+
+```bash
+journalctl -u ets-slowcontrol -f
+# expect lines like:
+#   LakeShore PID out 1 → P=680.000 I=1.000 D=0.000
+#   LakeShore RANGE out 1 → 0
+```
+
+### 16e. Test autovalve / humidity controls
+
+- Autovalve: click each mode button (gradient / threshold / manual) and
+  verify the active mode highlights and `ets/status/autovalve` reports the
+  new mode within ~1 s.
+- Humidity: enter a new setpoint and click Apply. Verify `ets/status/humidity_pid`
+  reports the new setpoint immediately (the controller publishes on change).
+
+**Pass criteria:** All buttons round-trip through MQTT to the hardware /
+controller and back to the page within ~2 s.
 
 ---
 

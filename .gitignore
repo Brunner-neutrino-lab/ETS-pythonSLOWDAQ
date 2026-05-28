@@ -44,3 +44,6 @@ deploy/data/
 
 # Conda
 *.conda
+
+# Reference / archive: cloned xsphere-slow-control kept as a sibling git repo
+_legacy/
