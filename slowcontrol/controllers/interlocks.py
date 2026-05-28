@@ -74,6 +74,7 @@ class InterlockManager(Controller):
         if value is None:
             return
 
+
         for rule_name, rule in self._rules.items():
             rule_topic = rule.get("topic", "")
             if topic != rule_topic:
@@ -102,7 +103,10 @@ class InterlockManager(Controller):
                         },
                     )
             else:
-                self._violations.pop(rule_name, None)
+                if rule_name in self._violations:
+                    log.info("Clearing violation for %s (value %s no longer > %s)", rule_name, value, threshold)
+                    self._violations.pop(rule_name, None)
+                    self.publish_status()
 
     def _execute_action(self, rule: dict) -> None:
         relay = rule.get("relay")

@@ -124,7 +124,7 @@ class LabJackT7Driver(SensorDriver):
 
         ljm.eWriteName(self._handle, f"{p}_EF_INDEX", 0)       # reset EF
         ljm.eWriteName(self._handle, f"{p}_EF_INDEX", ef_index)
-        ljm.eWriteName(self._handle, f"{p}_EF_CONFIG_A", 1)    # Kelvin
+        ljm.eWriteName(self._handle, f"{p}_EF_CONFIG_A", 0)    # Kelvin
         ljm.eWriteName(self._handle, f"{p}_EF_CONFIG_B", 60052)  # CJC modbus
         ljm.eWriteName(self._handle, f"{p}_EF_CONFIG_D", 1)    # internal CJC
         ljm.eWriteName(self._handle, f"{p}_EF_CONFIG_E", 0)    # CJC offset

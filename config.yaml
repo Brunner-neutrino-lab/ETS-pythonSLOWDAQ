@@ -46,14 +46,14 @@ drivers:
 
   humidity:
     type: dht_serial
-    port: /dev/ttyUSB0
+    port: /dev/serial/by-id/usb-FTDI_FT232R_USB_UART_AK06FZMI-if00-port0
     baud: 9600
     poll_interval: 5.0
 
 # ── GPIO Relays ────────────────────────────────────────────────
 relays:
-  ln2_valve:        {pin: 19, default: closed, active_low: true}
-  pressure_sensor:  {pin: 26, default: closed, active_low: true}
+  ln2_valve:        {pin: 19, default: closed, active_low: false}
+  pressure_sensor:  {pin: 26, default: closed, active_low: false}
   gn2_valve:        {pin: 13, default: closed, active_low: true}
 
 # ── Autonomous Controllers ────────────────────────────────────
@@ -61,7 +61,7 @@ controllers:
 
   autovalve:
     enabled: true
-    mode: gradient                  # gradient | threshold
+    mode: threshold                  # gradient | threshold
     level_channels: [RES1, RES2]
     overfill_channel: RES7
     valve_relay: ln2_valve
