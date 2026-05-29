@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Rounded dark tile, matches the page background -->
+  <rect width="64" height="64" rx="11" fill="#11151c"/>
+
+  <!-- Dewar / cryostat body (rounded bottom, open top with a cap line) -->
+  <g fill="none" stroke="#58a6ff" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M 20 13 L 20 49 Q 20 56 27 56 L 37 56 Q 44 56 44 49 L 44 13"/>
+    <line x1="16" y1="13" x2="48" y2="13"/>
+  </g>
+
+  <!-- Liquid fill (~60%) -->
+  <path d="M 22 32 L 22 49 Q 22 54 27 54 L 37 54 Q 42 54 42 49 L 42 32 Z"
+        fill="#58a6ff" opacity="0.45"/>
+
+  <!-- Liquid surface (subtle wave) -->
+  <path d="M 22 32 Q 27 30 32 32 T 42 32"
+        fill="none" stroke="#58a6ff" stroke-width="2" stroke-linecap="round"/>
+
+  <!-- A tiny vapor flake escaping the neck -->
+  <g stroke="#dde3ee" stroke-width="1.6" stroke-linecap="round" fill="none" transform="translate(32 8)">
+    <line x1="0" y1="-3.5" x2="0" y2="3.5"/>
+    <line x1="-3" y1="-1.7" x2="3" y2="1.7"/>
+    <line x1="-3" y1="1.7" x2="3" y2="-1.7"/>
+  </g>
+</svg>
