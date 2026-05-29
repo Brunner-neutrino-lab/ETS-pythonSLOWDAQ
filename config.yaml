@@ -60,7 +60,8 @@ relays:
 controllers:
 
   autovalve:
-    enabled: true
+    enabled: true                    # register the controller in the service
+    start_enabled: false             # do NOT auto-arm on service restart
     mode: threshold                  # gradient | threshold
     level_channels: [RES1, RES2]
     overfill_channel: RES7

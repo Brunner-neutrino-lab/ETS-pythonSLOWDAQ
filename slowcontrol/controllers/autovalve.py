@@ -47,11 +47,15 @@ class AutovalveController(Controller):
         self._gradient_trigger: float = config.get("gradient_trigger", -1e-4)
         self._scan_interval: float = config.get("scan_interval", 1.0)
 
-        # Runtime state
+        # Runtime state.  start_enabled defaults to False so a service restart
+        # (planned or after a power cut) does NOT auto-arm the autovalve;
+        # operator must explicitly re-enable from the control page.  Override
+        # with `start_enabled: true` in config.yaml if you ever want the old
+        # auto-arm behaviour back.
         self._state = FillState.WAITING
         self._fill_start: float | None = None
         self._last_fill_end: float | None = None
-        self._enabled = True
+        self._enabled = bool(config.get("start_enabled", False))
 
         # Rolling gradient buffer (≈60 samples at 1 Hz)
         self._level_history: dict[str, deque] = {
@@ -76,7 +80,12 @@ class AutovalveController(Controller):
             target=self._control_loop, name="autovalve", daemon=True
         )
         self._thread.start()
-        log.info("Autovalve controller started (mode=%s)", self._mode)
+        # Republish so the retained status reflects the current (post-restart)
+        # state — without this, operators see the stale FILLING/COOLDOWN value
+        # from before the bounce until the next state transition.
+        self.publish_status()
+        log.info("Autovalve controller started (mode=%s, enabled=%s)",
+                 self._mode, self._enabled)
 
     def stop(self) -> None:
         self._stop.set()
