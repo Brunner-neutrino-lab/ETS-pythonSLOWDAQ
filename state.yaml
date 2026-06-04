@@ -243,6 +243,12 @@ groups:
       source: {topic: ets/status/autovalve, key: enabled}
       period_s: null
     # ── Autovalve tunables — set via ets/commands/autovalve/set ───────
+    autovalve_fill_trigger:
+      kind: analog
+      unit: V
+      label: "Autovalve: fill-trigger level (threshold mode)"
+      source: {topic: ets/status/autovalve, key: fill_trigger}
+      period_s: null
     autovalve_full_tank:
       kind: analog
       unit: V

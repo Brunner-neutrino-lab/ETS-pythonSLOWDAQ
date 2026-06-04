@@ -181,10 +181,16 @@
       <div class="row"><span class="title">Tuning</span>
         <small class="hint" style="margin:0 0 0 .4rem">Each Apply sends just that field;
           empty fields keep the current value. Bad values are rejected (see service log).</small></div>
+      <div class="row"><span class="lbl">fill trigger (V)</span>
+        <input type="number" step="0.1" id="av-fl-in" style="width:7rem">
+        <button class="act" onclick="setAutovalveParam('fill_trigger', 'av-fl-in')">Apply</button>
+        <span id="av-fl-msg" class="cur"></span>
+        <small class="hint" style="margin:0 0 0 .4rem">start a fill in threshold mode when any watched channel drops below this</small></div>
       <div class="row"><span class="lbl">full-tank (V)</span>
         <input type="number" step="0.1" id="av-ft-in" style="width:7rem">
         <button class="act" onclick="setAutovalveParam('full_tank', 'av-ft-in')">Apply</button>
-        <span id="av-ft-msg" class="cur"></span></div>
+        <span id="av-ft-msg" class="cur"></span>
+        <small class="hint" style="margin:0 0 0 .4rem">stop the current fill once any watched channel reaches this</small></div>
       <div class="row"><span class="lbl">overfill thresh (V)</span>
         <input type="number" step="0.1" id="av-ot-in" style="width:7rem">
         <button class="act" onclick="setAutovalveParam('overfill_threshold', 'av-ot-in')">Apply</button>
@@ -531,6 +537,7 @@ function setAutovalveEnabled(on){
 // ---- Autovalve tunables ---------------------------------------------------
 const AV_LEVEL_CHANNEL_OPTS = ["RES1","RES2","RES3","RES4","RES5","RES6","RES7"];
 const AV_SNAPSHOT_KEYS = {
+  fill_trigger:       "autovalve_fill_trigger",
   full_tank:          "autovalve_full_tank",
   overfill_threshold: "autovalve_overfill_threshold",
   gradient_trigger:   "autovalve_gradient_trigger",
@@ -558,6 +565,7 @@ function updateAutovalveTuning(){
     if (!el || document.activeElement === el) return;
     if (el.value === "") el.placeholder = (v == null ? "" : (fmt ? fmt(v) : String(v)));
   };
+  refresh("av-fl-in",  AV_SNAPSHOT_KEYS.fill_trigger);
   refresh("av-ft-in",  AV_SNAPSHOT_KEYS.full_tank);
   refresh("av-ot-in",  AV_SNAPSHOT_KEYS.overfill_threshold);
   refresh("av-gt-in",  AV_SNAPSHOT_KEYS.gradient_trigger, v => v.toExponential(2));
@@ -596,7 +604,7 @@ function setAutovalveParam(paramName, inputId){
                       ok ? "" : "stale"));
 }
 function paramKey(name){
-  return {full_tank:"ft", overfill_threshold:"ot", gradient_trigger:"gt",
+  return {fill_trigger:"fl", full_tank:"ft", overfill_threshold:"ot", gradient_trigger:"gt",
           fill_timeout:"fto", cooldown:"cd", overfill_channel:"oc"}[name] || name;
 }
 function applyAutovalveLevelChannels(){

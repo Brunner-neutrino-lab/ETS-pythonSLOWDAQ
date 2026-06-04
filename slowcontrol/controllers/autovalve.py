@@ -48,6 +48,13 @@ class AutovalveController(Controller):
         self._overfill_threshold: float = config.get("overfill_threshold", 9.8)
         self._overfill_close: float = config.get("overfill_close", 9.0)
         self._full_tank: float = config.get("full_tank", 9.5)
+        # Voltage below which threshold-mode starts a fill.  Previously this
+        # was implicitly `full_tank * 0.5` inside _check_threshold; it's now
+        # an explicit tunable that defaults to that same half-of-full value
+        # for backwards compatibility when config.yaml doesn't set it.
+        self._fill_trigger: float = config.get(
+            "fill_trigger", self._full_tank * 0.5
+        )
         self._gradient_trigger: float = config.get("gradient_trigger", -1e-4)
         self._scan_interval: float = config.get("scan_interval", 1.0)
 
@@ -123,6 +130,7 @@ class AutovalveController(Controller):
             # settable via ets/commands/autovalve/set {<param>: <value>}.
             "level_channels": list(self._level_channels),
             "overfill_channel": self._overfill_channel,
+            "fill_trigger": self._fill_trigger,
             "full_tank": self._full_tank,
             "overfill_threshold": self._overfill_threshold,
             "overfill_close": self._overfill_close,
@@ -174,6 +182,7 @@ class AutovalveController(Controller):
     # Times are seconds, thresholds are volts, channels are MQTT channel names
     # (the last segment of ets/sensors/<driver>/<channel>).
     _TUNABLES = {
+        "fill_trigger":       ("_fill_trigger",      "float"),
         "full_tank":          ("_full_tank",          "float"),
         "overfill_threshold": ("_overfill_threshold", "float"),
         "overfill_close":     ("_overfill_close",    "float"),
@@ -230,6 +239,7 @@ class AutovalveController(Controller):
 
     _PERSIST_KEYS = (
         "mode",
+        "fill_trigger",
         "full_tank", "overfill_threshold", "overfill_close",
         "gradient_trigger", "fill_timeout", "cooldown",
         "level_channels", "overfill_channel",
@@ -279,6 +289,7 @@ class AutovalveController(Controller):
         path = self._persist_path
         data = {
             "mode":               self._mode,
+            "fill_trigger":       self._fill_trigger,
             "full_tank":          self._full_tank,
             "overfill_threshold": self._overfill_threshold,
             "overfill_close":     self._overfill_close,
@@ -437,7 +448,7 @@ class AutovalveController(Controller):
     def _check_threshold(self) -> bool:
         for ch in self._level_channels:
             value = self._latest_levels.get(ch)
-            if value is not None and value < self._full_tank * 0.5:
+            if value is not None and value < self._fill_trigger:
                 return True
         return False
 

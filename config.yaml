@@ -68,10 +68,11 @@ controllers:
     valve_relay: ln2_valve
     fill_timeout: 600               # seconds
     cooldown: 900                   # seconds
-    overfill_threshold: 9.8         # volts
-    overfill_close: 9.0             # volts
-    full_tank: 9.5                  # volts
-    gradient_trigger: -1.0e-4       # V/s
+    overfill_threshold: 9.8         # volts — safety abort above this
+    overfill_close: 9.0             # volts — overfill clears below this
+    full_tank: 9.5                  # volts — fill stops normally at this
+    fill_trigger: 4.5               # volts — start fill below this (threshold mode)
+    gradient_trigger: -1.0e-4       # V/s   — start fill below this (gradient mode)
     scan_interval: 1.0              # seconds
 
   humidity_pid:
