@@ -174,7 +174,57 @@
       <button id="av-m-grad"   onclick="setAutovalveMode('gradient')">gradient</button>
       <button id="av-m-thresh" onclick="setAutovalveMode('threshold')">threshold</button>
       <small class="hint" style="margin:0 0 0 .4rem">gradient = trigger fills from level drop rate;
-        threshold = trigger when RES1/RES2 drop below a fixed voltage.</small></div>
+        threshold = trigger when watched channels drop below a fixed voltage.</small></div>
+
+    <!-- ─── Autovalve tunables ──────────────────────────────────── -->
+    <div class="blk">
+      <div class="row"><span class="title">Tuning</span>
+        <small class="hint" style="margin:0 0 0 .4rem">Each Apply sends just that field;
+          empty fields keep the current value. Bad values are rejected (see service log).</small></div>
+      <div class="row"><span class="lbl">full-tank (V)</span>
+        <input type="number" step="0.1" id="av-ft-in" style="width:7rem">
+        <button class="act" onclick="setAutovalveParam('full_tank', 'av-ft-in')">Apply</button>
+        <span id="av-ft-msg" class="cur"></span></div>
+      <div class="row"><span class="lbl">overfill thresh (V)</span>
+        <input type="number" step="0.1" id="av-ot-in" style="width:7rem">
+        <button class="act" onclick="setAutovalveParam('overfill_threshold', 'av-ot-in')">Apply</button>
+        <span id="av-ot-msg" class="cur"></span></div>
+      <div class="row"><span class="lbl">gradient trig (V/s)</span>
+        <input type="text"   id="av-gt-in" style="width:7rem" placeholder="e.g. -1e-4">
+        <button class="act" onclick="setAutovalveParam('gradient_trigger', 'av-gt-in')">Apply</button>
+        <span id="av-gt-msg" class="cur"></span></div>
+      <div class="row"><span class="lbl">fill timeout (s)</span>
+        <input type="number" step="1" id="av-fto-in" style="width:7rem">
+        <button class="act" onclick="setAutovalveParam('fill_timeout', 'av-fto-in')">Apply</button>
+        <span id="av-fto-msg" class="cur"></span></div>
+      <div class="row"><span class="lbl">cooldown (s)</span>
+        <input type="number" step="1" id="av-cd-in" style="width:7rem">
+        <button class="act" onclick="setAutovalveParam('cooldown', 'av-cd-in')">Apply</button>
+        <span id="av-cd-msg" class="cur"></span></div>
+    </div>
+
+    <!-- ─── Channel selection ──────────────────────────────────── -->
+    <div class="blk">
+      <div class="row"><span class="title">Watched channels</span>
+        <small class="hint" style="margin:0 0 0 .4rem">level_channels are scanned in the active trigger mode;
+          overfill_channel is the safety-abort sensor (RES7 by default).</small></div>
+      <div class="row"><span class="lbl">level channels</span>
+        <span id="av-lc-boxes" style="display:flex; gap:.6rem; flex-wrap:wrap"></span>
+        <button class="act" onclick="applyAutovalveLevelChannels()">Apply selection</button>
+        <span id="av-lc-msg" class="cur"></span></div>
+      <div class="row"><span class="lbl">overfill channel</span>
+        <select id="av-oc-in">
+          <option value="RES1">RES1</option>
+          <option value="RES2">RES2</option>
+          <option value="RES3">RES3</option>
+          <option value="RES4">RES4</option>
+          <option value="RES5">RES5</option>
+          <option value="RES6">RES6</option>
+          <option value="RES7">RES7</option>
+        </select>
+        <button class="act" onclick="setAutovalveParam('overfill_channel', 'av-oc-in')">Apply</button>
+        <span id="av-oc-msg" class="cur"></span></div>
+    </div>
   </section>
 
   <!-- ─── Humidity PID ────────────────────────────────────────── -->
@@ -478,6 +528,86 @@ function setAutovalveEnabled(on){
   cmd("ets/commands/autovalve/mode", {mode: on ? "auto" : "manual"});
 }
 
+// ---- Autovalve tunables ---------------------------------------------------
+const AV_LEVEL_CHANNEL_OPTS = ["RES1","RES2","RES3","RES4","RES5","RES6","RES7"];
+const AV_SNAPSHOT_KEYS = {
+  full_tank:          "autovalve_full_tank",
+  overfill_threshold: "autovalve_overfill_threshold",
+  gradient_trigger:   "autovalve_gradient_trigger",
+  fill_timeout:       "autovalve_fill_timeout",
+  cooldown:           "autovalve_cooldown",
+  overfill_channel:   "autovalve_overfill_channel",
+};
+let avBuilt = false;
+function buildAutovalveCheckboxes(){
+  $("av-lc-boxes").innerHTML = AV_LEVEL_CHANNEL_OPTS.map(c =>
+    `<label style="cursor:pointer; white-space:nowrap; font-weight:400">`
+    + `<input type="checkbox" class="av-lc" value="${c}"> ${c}</label>`
+  ).join("");
+  avBuilt = true;
+}
+
+function updateAutovalveTuning(){
+  if (!avBuilt) buildAutovalveCheckboxes();
+  // Numeric / text tunables: refresh placeholder text with current value
+  // when the field is empty (don't fight the operator while they're typing).
+  const refresh = (inputId, stateId, fmt) => {
+    const st = S(stateId);
+    const v  = st && st.value;
+    const el = $(inputId);
+    if (!el || document.activeElement === el) return;
+    if (el.value === "") el.placeholder = (v == null ? "" : (fmt ? fmt(v) : String(v)));
+  };
+  refresh("av-ft-in",  AV_SNAPSHOT_KEYS.full_tank);
+  refresh("av-ot-in",  AV_SNAPSHOT_KEYS.overfill_threshold);
+  refresh("av-gt-in",  AV_SNAPSHOT_KEYS.gradient_trigger, v => v.toExponential(2));
+  refresh("av-fto-in", AV_SNAPSHOT_KEYS.fill_timeout);
+  refresh("av-cd-in",  AV_SNAPSHOT_KEYS.cooldown);
+  // Overfill channel dropdown: snap to current value unless focused
+  const ocSt = S(AV_SNAPSHOT_KEYS.overfill_channel);
+  if (ocSt && ocSt.value && document.activeElement !== $("av-oc-in")) {
+    if ($("av-oc-in").value !== ocSt.value) $("av-oc-in").value = ocSt.value;
+  }
+  // Level channels: the list lives in the raw status (it's not a scalar),
+  // synced in tick() into AV_LAST_LEVEL_CHANNELS.  Don't touch the boxes
+  // while the operator is editing them.
+  const lc = AV_LAST_LEVEL_CHANNELS;
+  const focusInBoxes = document.activeElement && document.activeElement.classList?.contains("av-lc");
+  if (lc && !focusInBoxes){
+    const want = new Set(lc);
+    document.querySelectorAll(".av-lc").forEach(cb => { cb.checked = want.has(cb.value); });
+  }
+}
+let AV_LAST_LEVEL_CHANNELS = null;        // updated each tick from raw status payload
+
+function setAutovalveParam(paramName, inputId){
+  const raw = $(inputId).value.trim();
+  if (raw === ""){ flash(`av-${paramKey(paramName)}-msg`, "enter a value", "stale"); return; }
+  let value;
+  if (paramName === "overfill_channel"){
+    value = raw;
+  } else {
+    value = parseFloat(raw);
+    if (!Number.isFinite(value)){ flash(`av-${paramKey(paramName)}-msg`, "bad number", "stale"); return; }
+  }
+  cmd("ets/commands/autovalve/set", {[paramName]: value})
+    .then(ok => flash(`av-${paramKey(paramName)}-msg`,
+                      ok ? `sent: ${value}` : "FAILED",
+                      ok ? "" : "stale"));
+}
+function paramKey(name){
+  return {full_tank:"ft", overfill_threshold:"ot", gradient_trigger:"gt",
+          fill_timeout:"fto", cooldown:"cd", overfill_channel:"oc"}[name] || name;
+}
+function applyAutovalveLevelChannels(){
+  const selected = [...document.querySelectorAll(".av-lc:checked")].map(cb => cb.value);
+  if (selected.length === 0){ flash("av-lc-msg", "pick at least one", "stale"); return; }
+  cmd("ets/commands/autovalve/set", {level_channels: selected})
+    .then(ok => flash("av-lc-msg",
+                      ok ? `sent: [${selected.join(", ")}]` : "FAILED",
+                      ok ? "" : "stale"));
+}
+
 // ---- Humidity PID ---------------------------------------------------------
 function updateHumidity(){
   const m = S("humidity_pid_measured"), sp = S("humidity_pid_setpoint"), d = S("humidity_pid_duty_cycle");
@@ -533,9 +663,17 @@ async function tick(){
   $("p-mq").textContent = "mqtt: "+(d.mqtt_connected ? "connected" : "DOWN");
   $("p-mq").className = "pill " + (d.mqtt_connected ? "ok" : "bad");
 
+  // Level-channels list lives in the raw status payload (it's a list,
+  // not a scalar, so it isn't in the consolidated snapshot).
+  const avRaw = d.state && d.state["ets/status/autovalve"];
+  if (avRaw && avRaw.payload && Array.isArray(avRaw.payload.level_channels)){
+    AV_LAST_LEVEL_CHANNELS = avRaw.payload.level_channels;
+  }
+
   updateRelays();
   updateLakeShore();
   updateAutovalve();
+  updateAutovalveTuning();
   updateHumidity();
 }
 tick(); setInterval(tick, 1500);

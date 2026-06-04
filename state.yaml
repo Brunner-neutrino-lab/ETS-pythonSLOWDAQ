@@ -242,6 +242,42 @@ groups:
       label: "Autovalve enabled"
       source: {topic: ets/status/autovalve, key: enabled}
       period_s: null
+    # ── Autovalve tunables — set via ets/commands/autovalve/set ───────
+    autovalve_full_tank:
+      kind: analog
+      unit: V
+      label: "Autovalve: full-tank level"
+      source: {topic: ets/status/autovalve, key: full_tank}
+      period_s: null
+    autovalve_overfill_threshold:
+      kind: analog
+      unit: V
+      label: "Autovalve: overfill threshold"
+      source: {topic: ets/status/autovalve, key: overfill_threshold}
+      period_s: null
+    autovalve_gradient_trigger:
+      kind: analog
+      unit: V/s
+      label: "Autovalve: gradient trigger (V/s)"
+      source: {topic: ets/status/autovalve, key: gradient_trigger}
+      period_s: null
+    autovalve_fill_timeout:
+      kind: analog
+      unit: s
+      label: "Autovalve: fill timeout"
+      source: {topic: ets/status/autovalve, key: fill_timeout}
+      period_s: null
+    autovalve_cooldown:
+      kind: analog
+      unit: s
+      label: "Autovalve: cooldown"
+      source: {topic: ets/status/autovalve, key: cooldown}
+      period_s: null
+    autovalve_overfill_channel:
+      kind: text
+      label: "Autovalve: overfill channel"
+      source: {topic: ets/status/autovalve, key: overfill_channel}
+      period_s: null
     humidity_pid_setpoint:
       kind: analog
       unit: "%RH"

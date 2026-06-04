@@ -75,6 +75,9 @@ class AutovalveController(Controller):
         self.mqtt.subscribe(
             "ets/commands/autovalve/mode", self._on_mode_command
         )
+        self.mqtt.subscribe(
+            "ets/commands/autovalve/set", self._on_set_command
+        )
         self._stop.clear()
         self._thread = threading.Thread(
             target=self._control_loop, name="autovalve", daemon=True
@@ -102,6 +105,16 @@ class AutovalveController(Controller):
             "overfill_value": self._overfill_value,
             "levels": dict(self._latest_levels),
             "fill_start": self._fill_start,
+            # Tunables — exposed so the GUI can read them back.  Each is also
+            # settable via ets/commands/autovalve/set {<param>: <value>}.
+            "level_channels": list(self._level_channels),
+            "overfill_channel": self._overfill_channel,
+            "full_tank": self._full_tank,
+            "overfill_threshold": self._overfill_threshold,
+            "overfill_close": self._overfill_close,
+            "gradient_trigger": self._gradient_trigger,
+            "fill_timeout": self._fill_timeout,
+            "cooldown": self._cooldown_time,
             "ts": time.time(),
         }
 
@@ -138,6 +151,85 @@ class AutovalveController(Controller):
             self._mode = mode
             log.info("Autovalve mode → %s", mode)
         self.publish_status()
+
+    # Whitelist of operator-tunable parameters: attribute name → coercer.
+    # Times are seconds, thresholds are volts, channels are MQTT channel names
+    # (the last segment of ets/sensors/<driver>/<channel>).
+    _TUNABLES = {
+        "full_tank":          ("_full_tank",          "float"),
+        "overfill_threshold": ("_overfill_threshold", "float"),
+        "overfill_close":     ("_overfill_close",    "float"),
+        "gradient_trigger":   ("_gradient_trigger",  "float"),
+        "fill_timeout":       ("_fill_timeout",      "positive_float"),
+        "cooldown":           ("_cooldown_time",     "non_negative_float"),
+        "level_channels":     ("_level_channels",    "channel_list"),
+        "overfill_channel":   ("_overfill_channel",  "channel_str"),
+    }
+
+    def _on_set_command(self, topic: str, payload: dict) -> None:
+        """Apply runtime parameter tweaks.  Payload is {param: value, ...}.
+
+        Unknown params are ignored with a warning; invalid values are
+        rejected per-param so a typo in one field doesn't poison the rest.
+        """
+        if not isinstance(payload, dict):
+            log.warning("autovalve/set: payload must be a mapping, got %r", payload)
+            return
+
+        applied: dict[str, Any] = {}
+        for key, raw in payload.items():
+            if key not in self._TUNABLES:
+                log.warning("autovalve/set: unknown param %r ignored", key)
+                continue
+            attr, kind = self._TUNABLES[key]
+            try:
+                value = self._coerce_tunable(kind, raw)
+            except (TypeError, ValueError) as exc:
+                log.warning("autovalve/set: rejected %s=%r (%s)", key, raw, exc)
+                continue
+
+            # Special: changing level_channels has to rebuild the history buffer
+            # so gradient mode doesn't compute on stale data from removed channels.
+            if attr == "_level_channels":
+                self._level_history = {
+                    ch: deque(self._level_history.get(ch, ()), maxlen=60)
+                    for ch in value
+                }
+
+            setattr(self, attr, value)
+            applied[key] = value
+            log.info("Autovalve param %s → %s", key, value)
+
+        if applied:
+            self.publish_status()
+
+    @staticmethod
+    def _coerce_tunable(kind: str, raw: Any) -> Any:
+        if kind == "float":
+            return float(raw)
+        if kind == "positive_float":
+            v = float(raw)
+            if v <= 0:
+                raise ValueError("must be > 0")
+            return v
+        if kind == "non_negative_float":
+            v = float(raw)
+            if v < 0:
+                raise ValueError("must be >= 0")
+            return v
+        if kind == "channel_str":
+            s = str(raw).strip()
+            if not s:
+                raise ValueError("channel name cannot be empty")
+            return s
+        if kind == "channel_list":
+            if not isinstance(raw, (list, tuple)):
+                raise TypeError("expected a list of channel names")
+            cleaned = [str(c).strip() for c in raw if str(c).strip()]
+            if not cleaned:
+                raise ValueError("at least one channel required")
+            return cleaned
+        raise ValueError(f"unknown coercer {kind!r}")
 
     # ── control loop ───────────────────────────────────────────
 
