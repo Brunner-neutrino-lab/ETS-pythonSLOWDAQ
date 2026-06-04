@@ -50,6 +50,11 @@ class InterlockManager(Controller):
             target=self._watchdog_loop, name="interlocks", daemon=True
         )
         self._thread.start()
+        # Publish fresh status so a previously-retained violation from before
+        # the bounce doesn't survive forever — the on-sensor handler only
+        # publishes on state change, so without this the all_ok=false from
+        # a prior session sticks until something is actively violating.
+        self.publish_status()
         log.info("Interlock manager started (%d rules)", len(self._rules))
 
     def stop(self) -> None:
