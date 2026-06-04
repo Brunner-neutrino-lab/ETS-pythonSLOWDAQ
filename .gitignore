@@ -47,3 +47,8 @@ deploy/data/
 
 # Reference / archive: cloned xsphere-slow-control kept as a sibling git repo
 _legacy/
+
+# Persisted controller runtime state (autovalve tunables, etc.) — written
+# by the running service and reloaded on restart.  Not tracked in git so
+# the file represents whatever is live on the deployed Pi.
+runtime/

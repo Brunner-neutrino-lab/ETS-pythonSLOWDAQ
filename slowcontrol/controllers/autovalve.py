@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
 from collections import deque
 from enum import Enum
+from pathlib import Path
 from typing import Any
+
+import yaml
 
 from slowcontrol.controllers.base import Controller
 from slowcontrol.core.registry import register_controller
@@ -66,6 +70,16 @@ class AutovalveController(Controller):
 
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
+
+        # Persisted runtime state.  Path defaults to runtime/autovalve.yaml
+        # under the working dir (the systemd unit sets WorkingDirectory=
+        # /home/pi/ETS-pythonSLOWDAQ).  Override with ETS_RUNTIME_DIR.
+        # mode + tunables (NOT enabled — fail-safe stays off across restarts)
+        # are written on every change and reapplied here over the config
+        # defaults set above.
+        runtime_dir = Path(os.environ.get("ETS_RUNTIME_DIR", "runtime"))
+        self._persist_path = runtime_dir / "autovalve.yaml"
+        self._load_persisted_state()
 
     # ── lifecycle ──────────────────────────────────────────────
 
@@ -140,6 +154,7 @@ class AutovalveController(Controller):
 
     def _on_mode_command(self, topic: str, payload: dict) -> None:
         mode = payload.get("mode")
+        persisted_change = False
         if mode == "auto":
             self._enabled = True
             log.info("Autovalve enabled")
@@ -150,7 +165,10 @@ class AutovalveController(Controller):
         elif mode in ("gradient", "threshold"):
             self._mode = mode
             log.info("Autovalve mode → %s", mode)
+            persisted_change = True
         self.publish_status()
+        if persisted_change:
+            self._save_persisted_state()
 
     # Whitelist of operator-tunable parameters: attribute name → coercer.
     # Times are seconds, thresholds are volts, channels are MQTT channel names
@@ -202,6 +220,88 @@ class AutovalveController(Controller):
 
         if applied:
             self.publish_status()
+            self._save_persisted_state()
+
+    # ── persistence ────────────────────────────────────────────
+    # Written whenever a tunable or mode changes; reloaded at startup so
+    # operator tweaks survive a service bounce.  `enabled` is deliberately
+    # NOT persisted: the autovalve must always come up disabled (see
+    # start_enabled note in __init__).
+
+    _PERSIST_KEYS = (
+        "mode",
+        "full_tank", "overfill_threshold", "overfill_close",
+        "gradient_trigger", "fill_timeout", "cooldown",
+        "level_channels", "overfill_channel",
+    )
+
+    def _load_persisted_state(self) -> None:
+        path = self._persist_path
+        if not path.exists():
+            return
+        try:
+            with open(path, encoding="utf-8") as f:
+                data = yaml.safe_load(f) or {}
+        except (OSError, yaml.YAMLError) as exc:
+            log.warning("autovalve: could not load %s (%s); using config defaults",
+                        path, exc)
+            return
+        if not isinstance(data, dict):
+            log.warning("autovalve: %s is malformed; using config defaults", path)
+            return
+
+        applied = []
+        for key, raw in data.items():
+            if key == "mode":
+                if raw in ("gradient", "threshold"):
+                    self._mode = raw
+                    applied.append("mode")
+                continue
+            if key not in self._TUNABLES:
+                continue
+            attr, kind = self._TUNABLES[key]
+            try:
+                value = self._coerce_tunable(kind, raw)
+            except (TypeError, ValueError) as exc:
+                log.warning("autovalve: persisted %s=%r rejected (%s)", key, raw, exc)
+                continue
+            if attr == "_level_channels":
+                # Reset history for the persisted channel set; no prior data
+                # exists yet at construction time.
+                self._level_history = {ch: deque(maxlen=60) for ch in value}
+            setattr(self, attr, value)
+            applied.append(key)
+        if applied:
+            log.info("autovalve: applied persisted runtime state from %s (%s)",
+                     path, ", ".join(applied))
+
+    def _save_persisted_state(self) -> None:
+        path = self._persist_path
+        data = {
+            "mode":               self._mode,
+            "full_tank":          self._full_tank,
+            "overfill_threshold": self._overfill_threshold,
+            "overfill_close":     self._overfill_close,
+            "gradient_trigger":   self._gradient_trigger,
+            "fill_timeout":       self._fill_timeout,
+            "cooldown":           self._cooldown_time,
+            "level_channels":     list(self._level_channels),
+            "overfill_channel":   self._overfill_channel,
+        }
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(path.suffix + ".tmp")
+            with open(tmp, "w", encoding="utf-8") as f:
+                f.write("# Autovalve runtime state — written automatically when a\n"
+                        "# tunable or mode is changed via ets/commands/autovalve/{set,mode}.\n"
+                        "# Delete this file to revert to the defaults in config.yaml.\n"
+                        "# `enabled` is intentionally NOT persisted — the autovalve must\n"
+                        "# always come up disabled (fail-safe).\n")
+                yaml.safe_dump(data, f, default_flow_style=False, sort_keys=False)
+            os.replace(tmp, path)
+        except OSError as exc:
+            log.warning("autovalve: could not persist runtime state to %s (%s)",
+                        path, exc)
 
     @staticmethod
     def _coerce_tunable(kind: str, raw: Any) -> Any:
