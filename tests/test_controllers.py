@@ -110,6 +110,19 @@ class TestAutovalve:
         assert "mode" in state
         assert "enabled" in state
 
+    def test_persisted_tunables_survive_restart(self, av, mock_mqtt,
+                                                isolated_runtime_dir):
+        """Tunables set at runtime are reloaded over config; enabled is not."""
+        av._enabled = True
+        av._on_set_command("ets/commands/autovalve/set",
+                           {"fill_timeout": 42, "cooldown": 7})
+        assert (isolated_runtime_dir / "autovalve.yaml").exists()
+
+        av2 = AutovalveController("autovalve", {"fill_timeout": 10}, mock_mqtt)
+        assert av2._fill_timeout == 42.0
+        assert av2._cooldown_time == 7.0
+        assert av2._enabled is False
+
 
 # ── Config loading ─────────────────────────────────────────────
 
