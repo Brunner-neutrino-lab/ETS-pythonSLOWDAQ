@@ -27,7 +27,7 @@ class DHTSerialDriver(SensorDriver):
         poll_interval: float = 5.0,
     ):
         super().__init__(name, config, mqtt, poll_interval)
-        self._port = config.get("port", "/dev/ttyUSB0")
+        self._port = config.get("port", "/dev/serial/by-id/usb-FTDI_FT232R_USB_UART_AK06FZMI-if00-port0")
         self._baud = config.get("baud", 9600)
         self._ser = None
 
@@ -39,14 +39,25 @@ class DHTSerialDriver(SensorDriver):
         log.info("DHT serial connected on %s @ %d baud", self._port, self._baud)
 
     def disconnect(self) -> None:
-        if self._ser and self._ser.is_open:
-            self._ser.close()
+        if self._ser:
+            try:
+                self._ser.close()
+            except OSError:
+                pass  # handle already dead after a USB drop
             self._ser = None
 
     def read(self) -> dict[str, Any]:
-        if not self._ser:
-            return {}
+        import serial
 
+        if not self._ser:
+            # Port was lost (USB re-enumeration) — retry once per poll.
+            try:
+                self.connect()
+            except serial.SerialException as exc:
+                log.warning("DHT reconnect failed: %s", exc)
+                return {}
+
+        line = ""
         try:
             line = self._ser.readline().decode().strip()
             if not line:
@@ -62,5 +73,8 @@ class DHTSerialDriver(SensorDriver):
                 }
         except (ValueError, UnicodeDecodeError):
             log.warning("Failed to parse DHT data: %s", line)
+        except serial.SerialException as exc:
+            log.warning("DHT serial connection lost (%s); reconnecting next poll", exc)
+            self.disconnect()
 
         return {}
