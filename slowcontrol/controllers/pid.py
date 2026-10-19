@@ -8,6 +8,10 @@ import time
 class PIDController:
     """Discrete PID controller with output clamping and back-calculation
     anti-windup.
+
+    Direct-acting by default: output rises while *measured* is below the
+    setpoint (e.g. a heater).  With ``reverse=True`` output rises while
+    *measured* is above it (e.g. a dry-N2 purge lowering humidity).
     """
 
     def __init__(
@@ -18,6 +22,7 @@ class PIDController:
         setpoint: float = 0.0,
         output_min: float = 0.0,
         output_max: float = 1.0,
+        reverse: bool = False,
     ):
         self.Kp = Kp
         self.Ki = Ki
@@ -25,6 +30,7 @@ class PIDController:
         self.setpoint = setpoint
         self.output_min = output_min
         self.output_max = output_max
+        self.reverse = reverse
         self._integral = 0.0
         self._prev_error = 0.0
         self._prev_time: float | None = None
@@ -33,6 +39,8 @@ class PIDController:
         """Compute new output given a *measured* process-variable reading."""
         now = time.monotonic()
         error = self.setpoint - measured
+        if self.reverse:
+            error = -error
 
         if self._prev_time is None:
             dt = 0.0

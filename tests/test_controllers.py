@@ -10,6 +10,7 @@ import pytest
 
 from slowcontrol.controllers.pid import PIDController
 from slowcontrol.controllers.autovalve import AutovalveController, FillState
+from slowcontrol.controllers.humidity import HumidityController
 
 
 # ── PID controller ─────────────────────────────────────────────
@@ -34,6 +35,66 @@ class TestPIDController:
         pid.reset()
         assert pid._integral == 0.0
         assert pid._prev_time is None
+
+    def test_reverse_acting(self):
+        """Reverse PID drives output up when measured is *above* setpoint."""
+        direct = PIDController(Kp=2.0, setpoint=10.0, output_max=100.0)
+        reverse = PIDController(Kp=2.0, setpoint=10.0, output_max=100.0,
+                                reverse=True)
+        assert direct.update(12.0) == 0.0          # clamped at output_min
+        assert reverse.update(12.0) == pytest.approx(4.0)
+        assert reverse.update(8.0) == 0.0
+
+
+# ── Humidity PID controller ───────────────────────────────────
+
+
+class TestHumidityPID:
+    RELAY_TOPIC = "ets/commands/relay/gn2_valve"
+
+    @pytest.fixture
+    def hum(self, mock_mqtt):
+        config = {"setpoint": 7.2, "Kp": 1.0, "cycle_duration": 600,
+                  "relay": "gn2_valve"}
+        return HumidityController("humidity_pid", config, mock_mqtt)
+
+    def _run_cycles(self, hum, monkeypatch, waits):
+        """Run the duty-cycle loop until it has waited *waits* times."""
+        calls = []
+
+        def fake_wait(timeout):
+            calls.append(timeout)
+            return len(calls) >= waits
+
+        monkeypatch.setattr(hum._stop, "wait", fake_wait)
+        hum._duty_cycle_loop()
+        return calls
+
+    def _relay_actions(self, mock_mqtt):
+        return [p["action"] for t, p in mock_mqtt._published
+                if t == self.RELAY_TOPIC]
+
+    def test_humid_opens_and_stays_open(self, hum, mock_mqtt, monkeypatch):
+        """Above setpoint → 100 % duty, no close blip between cycles."""
+        hum._on_humidity("ets/sensors/humidity/humidity", {"value": 35.7})
+        waits = self._run_cycles(hum, monkeypatch, waits=3)
+        assert hum._duty_cycle == 1.0
+        assert waits == [600, 600, 600]
+        assert self._relay_actions(mock_mqtt) == ["open", "open", "open"]
+
+    def test_dry_keeps_valve_closed(self, hum, mock_mqtt, monkeypatch):
+        hum._on_humidity("ets/sensors/humidity/humidity", {"value": 5.0})
+        self._run_cycles(hum, monkeypatch, waits=2)
+        assert hum._duty_cycle == 0.0
+        assert self._relay_actions(mock_mqtt) == ["close", "close"]
+
+    def test_partial_duty_cycles_valve(self, hum, mock_mqtt, monkeypatch):
+        hum._pid.Kp = 0.1
+        hum._on_humidity("ets/sensors/humidity/humidity", {"value": 12.2})
+        waits = self._run_cycles(hum, monkeypatch, waits=2)
+        assert hum._duty_cycle == pytest.approx(0.5)
+        assert waits == pytest.approx([300, 300])
+        assert self._relay_actions(mock_mqtt) == ["open", "close"]
 
 
 # ── Autovalve controller ──────────────────────────────────────

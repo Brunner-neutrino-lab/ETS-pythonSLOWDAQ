@@ -36,6 +36,7 @@ class HumidityController(Controller):
             setpoint=self._setpoint,
             output_min=0.0,
             output_max=1.0,
+            reverse=True,  # dry N2 lowers humidity: purge harder when above setpoint
         )
 
         self._current_humidity: float | None = None
@@ -111,10 +112,11 @@ class HumidityController(Controller):
                 if self._stop.wait(on_time):
                     break
 
-            # OFF phase
-            self._relay_close()
-            self.publish_status()
+            # OFF phase — skipped at 100 % duty so the valve stays open
+            # across cycles instead of blipping closed at each boundary.
             if off_time > 0:
+                self._relay_close()
+                self.publish_status()
                 if self._stop.wait(off_time):
                     break
 
