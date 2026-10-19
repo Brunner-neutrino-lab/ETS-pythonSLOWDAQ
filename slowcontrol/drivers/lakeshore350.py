@@ -14,6 +14,7 @@ Topics published (each {"value": <num>, "ts": <epoch>}):
   ets/sensors/lakeshore/range/1            0..5        ~0.2 Hz
   ets/sensors/lakeshore/mout/1             %           ~0.2 Hz
   ets/sensors/lakeshore/outmode/1          mode int    ~0.2 Hz
+  ets/sensors/lakeshore/outinput/1         input code  ~0.2 Hz
   ets/sensors/lakeshore/ramp_on/1          0/1         ~0.2 Hz
   ets/sensors/lakeshore/ramp_rate/1        K/min       ~0.2 Hz
   ets/sensors/lakeshore/rampst/1           0/1         ~0.2 Hz
@@ -24,10 +25,13 @@ Commands subscribed:
   ets/commands/lakeshore/range      {"output": 1, "range": 0..5}
   ets/commands/lakeshore/mout       {"output": 1, "value": 0..100}
   ets/commands/lakeshore/outmode    {"output": 1, "mode": 0..5}
+  ets/commands/lakeshore/outinput   {"output": 1, "input": "A".."D" | "None" | 0..4}
   ets/commands/lakeshore/ramp       {"output": 1, "on": bool, "rate": K/min}
 
 OUTMODE mode values:
   0=Off, 1=Closed Loop PID, 2=Zone, 3=Open Loop, 4=Monitor Out, 5=Warmup Supply
+OUTMODE input values (the loop's control input, i.e. its PV):
+  0=None, 1=A, 2=B, 3=C, 4=D
 RANGE values (outputs 1 & 2):
   0=Off, 1..5 = power range 1 (lowest) .. 5 (highest, ≈50 W on output 1)
 """
@@ -46,6 +50,9 @@ log = logging.getLogger(__name__)
 
 # Read loop-1 control parameters every Nth poll tick (1 Hz × 5 = 5 s).
 _SLOW_POLL_EVERY = 5
+
+# OUTMODE control-input codes, keyed by input letter.
+_INPUT_CODES = {"NONE": 0, "A": 1, "B": 2, "C": 3, "D": 4}
 
 
 @register_driver("lakeshore350")
@@ -66,6 +73,7 @@ class LakeShore350Driver(SensorDriver):
         self._sock: socket.socket | None = None
         self._lock = threading.Lock()
         self._tick = 0   # increments each poll; slow params poll every _SLOW_POLL_EVERY
+        self._force_slow = False   # set by writes so the next poll reads them back
 
     # ── lifecycle ──────────────────────────────────────────────
 
@@ -78,6 +86,7 @@ class LakeShore350Driver(SensorDriver):
         self.mqtt.subscribe("ets/commands/lakeshore/range",    self._on_range)
         self.mqtt.subscribe("ets/commands/lakeshore/mout",     self._on_mout)
         self.mqtt.subscribe("ets/commands/lakeshore/outmode",  self._on_outmode)
+        self.mqtt.subscribe("ets/commands/lakeshore/outinput", self._on_outinput)
         self.mqtt.subscribe("ets/commands/lakeshore/ramp",     self._on_ramp)
 
     def disconnect(self) -> None:
@@ -86,6 +95,7 @@ class LakeShore350Driver(SensorDriver):
         self.mqtt.unsubscribe("ets/commands/lakeshore/range",    self._on_range)
         self.mqtt.unsubscribe("ets/commands/lakeshore/mout",     self._on_mout)
         self.mqtt.unsubscribe("ets/commands/lakeshore/outmode",  self._on_outmode)
+        self.mqtt.unsubscribe("ets/commands/lakeshore/outinput", self._on_outinput)
         self.mqtt.unsubscribe("ets/commands/lakeshore/ramp",     self._on_ramp)
         if self._sock:
             self._sock.close()
@@ -111,7 +121,8 @@ class LakeShore350Driver(SensorDriver):
 
         # Slow-poll control parameters every 5 s (a SCPI round trip is ~10 ms;
         # batching them on a fraction of the poll cycle keeps the loop snappy).
-        if self._tick % _SLOW_POLL_EVERY == 0:
+        if self._tick % _SLOW_POLL_EVERY == 0 or self._force_slow:
+            self._force_slow = False
             pid = self._read_pid(1)
             if pid is not None:
                 readings["pid_p/1"] = round(pid[0], 3)
@@ -125,7 +136,8 @@ class LakeShore350Driver(SensorDriver):
                 readings["mout/1"] = round(mout, 2)
             outmode = self._read_outmode(1)
             if outmode is not None:
-                readings["outmode/1"] = outmode[0]   # just the mode int
+                readings["outmode/1"]  = outmode[0]
+                readings["outinput/1"] = outmode[1]   # control input (PV) code
             ramp = self._read_ramp(1)
             if ramp is not None:
                 readings["ramp_on/1"]   = ramp[0]
@@ -218,15 +230,21 @@ class LakeShore350Driver(SensorDriver):
         self._send(f"MOUT {output},{v:.2f}")
         log.info("LakeShore MOUT out %d → %.2f%%", output, v)
 
-    def set_outmode(self, output: int, mode: int) -> None:
-        # OUTMODE takes mode, input, powerup. Read the current input/powerup and
-        # preserve them so the operator only ever has to think about `mode`.
+    def set_outmode(self, output: int, mode: int | None = None,
+                    inp: int | None = None) -> None:
+        # OUTMODE takes mode, input, powerup with no partial form. Read the
+        # current values and replace only the field(s) being changed; refuse
+        # to write blind rather than guess the others.
         current = self._read_outmode(output)
-        inp = current[1] if current else 1            # default: input A
-        powerup = current[2] if current else 0
-        self._send(f"OUTMODE {output},{int(mode)},{inp},{powerup}")
-        log.info("LakeShore OUTMODE out %d → mode=%d (input=%d powerup=%d)",
-                 output, int(mode), inp, powerup)
+        if current is None:
+            log.warning("OUTMODE? %d unreadable; not writing OUTMODE", output)
+            return
+        mode = current[0] if mode is None else int(mode)
+        inp = current[1] if inp is None else int(inp)
+        powerup = current[2]
+        self._send(f"OUTMODE {output},{mode},{inp},{powerup}")
+        log.info("LakeShore OUTMODE out %d → mode=%d input=%d powerup=%d",
+                 output, mode, inp, powerup)
 
     def set_ramp(self, output: int, on: bool, rate_k_per_min: float) -> None:
         rate = max(0.1, min(100.0, float(rate_k_per_min)))
@@ -268,7 +286,19 @@ class LakeShore350Driver(SensorDriver):
         mode = payload.get("mode")
         if mode is None:
             return
-        self.set_outmode(out, int(mode))
+        self.set_outmode(out, mode=int(mode))
+
+    def _on_outinput(self, topic: str, payload: dict) -> None:
+        out = int(payload.get("output", 1))
+        raw = payload.get("input")
+        if isinstance(raw, str) and raw.strip().upper() in _INPUT_CODES:
+            inp = _INPUT_CODES[raw.strip().upper()]
+        elif isinstance(raw, int) and not isinstance(raw, bool) and 0 <= raw <= 4:
+            inp = raw
+        else:
+            log.warning("Bad outinput payload %r (want A-D, None, or 0-4)", payload)
+            return
+        self.set_outmode(out, inp=inp)
 
     def _on_ramp(self, topic: str, payload: dict) -> None:
         out = int(payload.get("output", 1))
@@ -315,7 +345,11 @@ class LakeShore350Driver(SensorDriver):
         return data.decode()
 
     def _send(self, command: str) -> None:
-        """Fire-and-forget write (used for set_* methods)."""
+        """Fire-and-forget write (used for set_* methods).
+
+        Flags the next poll to re-read the control parameters, so the GUI
+        shows what the instrument actually accepted within ~1 s.
+        """
         with self._lock:
             try:
                 self._raw_send(command)
@@ -323,6 +357,7 @@ class LakeShore350Driver(SensorDriver):
                 log.warning("LakeShore write error on %r (%s); reconnecting", command, exc)
                 self._open_socket()
                 self._raw_send(command)
+        self._force_slow = True
 
     def _raw_send(self, command: str) -> None:
         if not self._sock:

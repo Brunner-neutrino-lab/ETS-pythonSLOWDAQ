@@ -127,6 +127,11 @@ groups:
       label: "Output mode (0=Off · 1=ClosedLoop · 3=OpenLoop)"
       source: {topic: ets/sensors/lakeshore/outmode/1, key: value}
       period_s: 7
+    heater_input:
+      kind: analog          # OUTMODE control input: 0=None · 1=A · 2=B · 3=C · 4=D
+      label: "Loop 1 control input / PV (1=A · 2=B · 3=C · 4=D)"
+      source: {topic: ets/sensors/lakeshore/outinput/1, key: value}
+      period_s: 7
     heater_ramp_on:
       kind: binary
       label: "Setpoint ramp enabled"

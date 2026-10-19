@@ -74,7 +74,7 @@
 
     <div class="blk">
       <div class="row">
-        <span class="kv"><span class="k">RTD A (PV)</span><span id="ls-rtda" class="num">–</span> K</span>
+        <span class="kv"><span class="k" id="ls-pv-k">PV</span><span id="ls-pv" class="num">–</span> K</span>
         <span class="kv"><span class="k">setpoint</span><span id="ls-sp" class="num">–</span> K</span>
         <span class="kv"><span class="k">heater</span><span id="ls-out" class="num">–</span> %</span>
       </div>
@@ -83,6 +83,21 @@
         <span class="kv"><span class="k">range</span><span id="ls-rng-txt" class="num">–</span></span>
         <span class="kv"><span class="k">ramping</span><span id="ls-ramping" class="num">–</span></span>
       </div>
+    </div>
+
+    <div class="blk">
+      <div class="row"><span class="lbl">control input</span>
+        <select id="ls-in-in">
+          <option value="1">A</option>
+          <option value="2">B</option>
+          <option value="3">C</option>
+          <option value="4">D</option>
+          <option value="0">None</option>
+        </select>
+        <button class="act" onclick="setLakeShoreInput()">Apply</button>
+        <span id="ls-in-msg" class="cur"></span></div>
+      <small class="hint">The RTD loop 1 regulates on (its PV). Read back from the controller (OUTMODE?), so the
+        PV shown above always matches what the LakeShore is actually using.</small>
     </div>
 
     <div class="blk">
@@ -407,6 +422,7 @@ function updateRelays(){
 // ---- LakeShore loop 1 ------------------------------------------------------
 const LS_OUTMODE_NAMES = {0:"Off", 1:"Closed Loop", 2:"Zone", 3:"Open Loop", 4:"Monitor", 5:"Warmup"};
 const LS_RANGE_NAMES   = {0:"Off", 1:"R1 (low)", 2:"R2", 3:"R3", 4:"R4", 5:"R5 (high)"};
+const LS_INPUT_NAMES   = {0:"None", 1:"A", 2:"B", 3:"C", 4:"D"};
 
 function setPlaceholder(id, val){
   const e = $(id);
@@ -415,12 +431,17 @@ function setPlaceholder(id, val){
 }
 
 function updateLakeShore(){
-  const rtda = S("rtd_a"), sp = S("heater_setpoint"), out = S("heater_output");
+  const inp = S("heater_input"), sp = S("heater_setpoint"), out = S("heater_output");
   const p = S("heater_kp"), i = S("heater_ki"), d = S("heater_kd");
   const rng = S("heater_range"), om = S("heater_outmode"), mout = S("heater_mout");
   const ron = S("heater_ramp_on"), rrate = S("heater_ramp_rate"), rst = S("heater_ramping");
 
-  $("ls-rtda").textContent = rtda && rtda.value != null ? fmtNum(rtda.value) : "–";
+  // PV follows the controller's reported control input — never assumed.
+  const inName = inp && inp.value != null ? LS_INPUT_NAMES[inp.value] : null;
+  const pv = inName && inName !== "None" ? S("rtd_" + inName.toLowerCase()) : null;
+  $("ls-pv-k").textContent = inName == null ? "PV (input ?)"
+                           : inName === "None" ? "PV (no input)" : `RTD ${inName} (PV)`;
+  $("ls-pv").textContent   = pv && pv.value != null ? fmtNum(pv.value) : "–";
   $("ls-sp").textContent   = sp   && sp.value   != null ? fmtNum(sp.value)   : "–";
   $("ls-out").textContent  = out  && out.value  != null ? fmtNum(out.value)  : "–";
 
@@ -438,6 +459,7 @@ function updateLakeShore(){
   // Range + outmode dropdowns: reflect current value if not focused
   syncSelect("ls-rng-in", rng && rng.value);
   syncSelect("ls-om-in",  om  && om.value);
+  syncSelect("ls-in-in",  inp && inp.value);
 
   // Manual output placeholder
   setPlaceholder("ls-mout-in", mout && mout.value);
@@ -488,6 +510,16 @@ function setLakeShoreOutMode(){
   if (Number.isNaN(m)){ flash("ls-om-msg", "pick a mode", "stale"); return; }
   cmd("ets/commands/lakeshore/outmode", {output: 1, mode: m})
     .then(ok => flash("ls-om-msg", ok ? `sent: mode ${m} (${LS_OUTMODE_NAMES[m]})` : "FAILED", ok ? "" : "stale"));
+}
+function setLakeShoreInput(){
+  const n = parseInt($("ls-in-in").value, 10);
+  if (Number.isNaN(n)){ flash("ls-in-msg", "pick an input", "stale"); return; }
+  const cur = S("heater_input")?.value;
+  if (n === cur){ flash("ls-in-msg", `already ${LS_INPUT_NAMES[n]}`, ""); return; }
+  if (!confirm(`Change loop 1 control input from ${LS_INPUT_NAMES[cur] ?? "?"} to ${LS_INPUT_NAMES[n]}?\n` +
+               `The PID will immediately start regulating on the new sensor.`)) return;
+  cmd("ets/commands/lakeshore/outinput", {output: 1, input: n})
+    .then(ok => flash("ls-in-msg", ok ? `sent: input ${LS_INPUT_NAMES[n]}` : "FAILED", ok ? "" : "stale"));
 }
 function setLakeShoreMout(){
   const v = parseFloat($("ls-mout-in").value);
