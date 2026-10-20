@@ -77,6 +77,7 @@ controllers:
 
   humidity_pid:
     enabled: true
+    start_enabled: true             # PID runs on service start; on/off from the control page
     setpoint: 7.2                   # %RH
     Kp: 1.0
     Ki: 0.0

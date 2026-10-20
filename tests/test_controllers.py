@@ -58,17 +58,31 @@ class TestHumidityPID:
                   "relay": "gn2_valve"}
         return HumidityController("humidity_pid", config, mock_mqtt)
 
-    def _run_cycles(self, hum, monkeypatch, waits):
-        """Run the duty-cycle loop until it has waited *waits* times."""
+    def _run_cycles(self, hum, monkeypatch, waits, on_sleep=None):
+        """Run the duty-cycle loop until it has slept *waits* times.
+
+        *on_sleep(n)* runs at each earlier sleep (n = 1-based count);
+        returning True simulates the sleep being cut short by a toggle.
+        """
         calls = []
 
-        def fake_wait(timeout):
-            calls.append(timeout)
-            return len(calls) >= waits
+        def fake_sleep(seconds):
+            calls.append(seconds)
+            if len(calls) >= waits:
+                hum._stop.set()
+                return True
+            return bool(on_sleep and on_sleep(len(calls)))
 
-        monkeypatch.setattr(hum._stop, "wait", fake_wait)
+        monkeypatch.setattr(hum, "_sleep", fake_sleep)
         hum._duty_cycle_loop()
         return calls
+
+    @staticmethod
+    def _wait_for(cond, timeout=2.0):
+        deadline = time.monotonic() + timeout
+        while not cond() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert cond()
 
     def _relay_actions(self, mock_mqtt):
         return [p["action"] for t, p in mock_mqtt._published
@@ -95,6 +109,51 @@ class TestHumidityPID:
         assert hum._duty_cycle == pytest.approx(0.5)
         assert waits == pytest.approx([300, 300])
         assert self._relay_actions(mock_mqtt) == ["open", "close"]
+
+    def test_off_closes_valve_and_parks(self, hum, mock_mqtt, monkeypatch):
+        hum._on_humidity("ets/sensors/humidity/humidity", {"value": 35.7})
+        hum._on_enable("ets/commands/humidity/enable", {"enabled": False})
+        waits = self._run_cycles(hum, monkeypatch, waits=1)
+        assert waits == [None]                      # parked until woken
+        assert hum._duty_cycle == 0.0
+        assert self._relay_actions(mock_mqtt) == ["close"]
+        assert hum.get_state()["enabled"] is False
+
+    def test_off_then_on_restarts_cycle(self, hum, mock_mqtt, monkeypatch):
+        """Toggling cuts the current cycle short instead of waiting it out."""
+        hum._on_humidity("ets/sensors/humidity/humidity", {"value": 35.7})
+
+        def toggle(n):          # 1st sleep → off, 2nd sleep → on
+            hum._on_enable("ets/commands/humidity/enable", {"enabled": n == 2})
+            return True
+
+        waits = self._run_cycles(hum, monkeypatch, waits=3, on_sleep=toggle)
+        assert waits == [600, None, 600]
+        assert self._relay_actions(mock_mqtt) == ["open", "close", "open"]
+
+    def test_start_disabled_from_config(self, mock_mqtt):
+        hum = HumidityController("humidity_pid", {"start_enabled": False},
+                                 mock_mqtt)
+        assert hum.get_state()["enabled"] is False
+
+    @pytest.mark.parametrize("payload", [{}, {"enabled": "no"}, {"enabled": 0}])
+    def test_bad_enable_payload_ignored(self, hum, payload):
+        hum._on_enable("ets/commands/humidity/enable", payload)
+        assert hum._enabled is True
+        assert not hum._wake.is_set()
+
+    def test_off_takes_effect_mid_cycle(self, hum, mock_mqtt):
+        """Real thread: "off" closes the valve now, not after the 600 s cycle."""
+        hum._on_humidity("ets/sensors/humidity/humidity", {"value": 35.7})
+        hum.start()
+        try:
+            self._wait_for(lambda: self._relay_actions(mock_mqtt) == ["open"])
+            hum._on_enable("ets/commands/humidity/enable", {"enabled": False})
+            self._wait_for(
+                lambda: self._relay_actions(mock_mqtt) == ["open", "close"])
+        finally:
+            hum.stop()
+        assert not hum._thread.is_alive()
 
 
 # ── Autovalve controller ──────────────────────────────────────

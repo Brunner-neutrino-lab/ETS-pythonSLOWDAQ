@@ -289,6 +289,11 @@ groups:
       label: "Autovalve: overfill channel"
       source: {topic: ets/status/autovalve, key: overfill_channel}
       period_s: null
+    humidity_pid_enabled:
+      kind: binary
+      label: "Humidity PID enabled"
+      source: {topic: ets/status/humidity_pid, key: enabled}
+      period_s: null
     humidity_pid_setpoint:
       kind: analog
       unit: "%RH"

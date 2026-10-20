@@ -21,6 +21,10 @@ class HumidityController(Controller):
     The PID output (0–1) is converted into an on/off duty-cycle over a
     configurable period (default 600 s), driving a relay to control
     dry-nitrogen flow.
+
+    Can be switched off at runtime via ``ets/commands/humidity/enable``
+    ``{"enabled": false}``: the valve is closed and left for manual control
+    until ``{"enabled": true}`` starts a fresh cycle.
     """
 
     def __init__(self, name: str, config: dict[str, Any], mqtt):
@@ -39,10 +43,12 @@ class HumidityController(Controller):
             reverse=True,  # dry N2 lowers humidity: purge harder when above setpoint
         )
 
+        self._enabled = bool(config.get("start_enabled", True))
         self._current_humidity: float | None = None
         self._duty_cycle = 0.0
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
+        self._wake = threading.Event()   # cuts a cycle short (stop / on-off toggle)
 
     # ── lifecycle ──────────────────────────────────────────────
 
@@ -52,17 +58,22 @@ class HumidityController(Controller):
         self.mqtt.subscribe(
             "ets/commands/humidity/setpoint", self._on_setpoint
         )
+        self.mqtt.subscribe(
+            "ets/commands/humidity/enable", self._on_enable
+        )
         self._stop.clear()
         self._thread = threading.Thread(
             target=self._duty_cycle_loop, name="humidity-pid", daemon=True
         )
         self._thread.start()
         log.info(
-            "Humidity PID started (setpoint=%.1f%%)", self._setpoint
+            "Humidity PID started (setpoint=%.1f%%, enabled=%s)",
+            self._setpoint, self._enabled,
         )
 
     def stop(self) -> None:
         self._stop.set()
+        self._wake.set()
         self._relay_close()
         if self._thread:
             self._thread.join(timeout=self._cycle_duration + 5)
@@ -70,6 +81,7 @@ class HumidityController(Controller):
 
     def get_state(self) -> dict[str, Any]:
         return {
+            "enabled": self._enabled,
             "setpoint": self._setpoint,
             "measured": self._current_humidity,
             "duty_cycle": round(self._duty_cycle, 3),
@@ -92,10 +104,43 @@ class HumidityController(Controller):
             log.info("Humidity setpoint → %.1f%%", self._setpoint)
             self.publish_status()
 
+    def _on_enable(self, topic: str, payload: dict) -> None:
+        enabled = payload.get("enabled")
+        if not isinstance(enabled, bool):
+            log.warning("Bad humidity enable payload %r (want enabled: true|false)",
+                        payload)
+            return
+        if enabled != self._enabled:
+            self._enabled = enabled
+            if enabled:
+                self._pid.reset()   # fresh start, no stale integral/derivative
+            log.info("Humidity PID %s", "enabled" if enabled
+                     else "disabled (GN2 valve closed, manual control)")
+            self._wake.set()        # act now, not at the end of the current cycle
+        self.publish_status()
+
     # ── duty-cycle loop ────────────────────────────────────────
+
+    def _sleep(self, seconds: float | None) -> bool:
+        """Wait up to *seconds* (None = until woken).  True if cut short by
+        stop() or an on/off toggle, in which case the loop restarts."""
+        woke = self._wake.wait(seconds)
+        if woke:
+            self._wake.clear()
+        return woke
 
     def _duty_cycle_loop(self) -> None:
         while not self._stop.is_set():
+            if not self._enabled:
+                # Parked: hold the valve closed until re-enabled.  Closing
+                # here (not in the handler) also covers a toggle that lands
+                # between the enabled check and _relay_open below.
+                self._duty_cycle = 0.0
+                self._relay_close()
+                self.publish_status()
+                self._sleep(None)
+                continue
+
             # Compute PID
             if self._current_humidity is not None:
                 self._duty_cycle = self._pid.update(self._current_humidity)
@@ -109,16 +154,16 @@ class HumidityController(Controller):
             if on_time > 0:
                 self._relay_open()
                 self.publish_status()
-                if self._stop.wait(on_time):
-                    break
+                if self._sleep(on_time):
+                    continue
 
             # OFF phase — skipped at 100 % duty so the valve stays open
             # across cycles instead of blipping closed at each boundary.
             if off_time > 0:
                 self._relay_close()
                 self.publish_status()
-                if self._stop.wait(off_time):
-                    break
+                if self._sleep(off_time):
+                    continue
 
     def _relay_open(self) -> None:
         self.publish_command(

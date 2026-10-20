@@ -251,9 +251,16 @@
   <!-- ─── Humidity PID ────────────────────────────────────────── -->
   <section class="card">
     <h2>Humidity PID (cycles GN₂ valve)</h2>
-    <div class="row"><span class="kv"><span class="k">measured</span><span id="h-m" class="num">–</span> %RH</span>
+    <div class="row"><span class="kv"><span class="k">enabled</span><span id="h-en" class="num">–</span></span>
+                    <span class="kv"><span class="k">measured</span><span id="h-m" class="num">–</span> %RH</span>
                     <span class="kv"><span class="k">setpoint</span><span id="h-sp" class="num">–</span> %RH</span>
                     <span class="kv"><span class="k">duty</span><span id="h-duty" class="num">–</span></span></div>
+    <div class="row"><span class="lbl">PID</span>
+      <button id="h-en-on"  onclick="setHumidityEnabled(true)">on</button>
+      <button id="h-en-off" class="danger" onclick="setHumidityEnabled(false)">off (manual)</button>
+      <span id="h-en-msg" class="cur"></span>
+      <small class="hint" style="margin:0 0 0 .4rem">"off" stops the PID and closes the GN₂ valve, leaving it to
+        the manual relay buttons; "on" starts a fresh cycle immediately.</small></div>
     <div class="row"><span class="lbl">new setpoint</span>
       <input type="number" step="0.1" id="h-sp-in" placeholder="e.g. 7.2">
       <span class="lbl" style="min-width:auto">%RH</span>
@@ -651,6 +658,10 @@ function applyAutovalveLevelChannels(){
 // ---- Humidity PID ---------------------------------------------------------
 function updateHumidity(){
   const m = S("humidity_pid_measured"), sp = S("humidity_pid_setpoint"), d = S("humidity_pid_duty_cycle");
+  const en = S("humidity_pid_enabled");
+  $("h-en").textContent   = en && en.value != null ? (en.value ? "yes" : "no") : "–";
+  $("h-en-on").className  = en && en.value === true ? "on" : "";
+  $("h-en-off").className = en && en.value === false ? "warn" : "danger";
   $("h-m").textContent    = m  && m.value  != null ? fmtNum(m.value)  : "–";
   $("h-sp").textContent   = sp && sp.value != null ? fmtNum(sp.value) : "–";
   $("h-duty").textContent = d  && d.value  != null ? fmtNum(d.value)  : "–";
@@ -662,6 +673,10 @@ function setHumiditySetpoint(){
   if (Number.isNaN(v)){ flash("h-msg", "enter a number", "stale"); return; }
   cmd("ets/commands/humidity/setpoint", {value: v})
     .then(ok => flash("h-msg", ok ? `sent: ${v} %RH` : "FAILED", ok ? "" : "stale"));
+}
+function setHumidityEnabled(on){
+  cmd("ets/commands/humidity/enable", {enabled: on})
+    .then(ok => flash("h-en-msg", ok ? `sent: PID ${on ? "on" : "off"}` : "FAILED", ok ? "" : "stale"));
 }
 
 // ---- Top-of-page pills ----------------------------------------------------
