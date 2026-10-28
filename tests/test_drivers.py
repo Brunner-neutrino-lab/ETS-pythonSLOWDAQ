@@ -72,3 +72,93 @@ class TestBaseSensorDriver:
         d.start()
         d.stop()
         assert not d.is_running
+
+
+# ── DHT serial driver ─────────────────────────────────────────
+
+
+class _FakePort:
+    """Stand-in for serial.Serial: replays lines; an Exception item is raised."""
+
+    def __init__(self, lines):
+        self.lines = list(lines)
+        self.is_open = True
+
+    def reset_input_buffer(self):
+        pass
+
+    def close(self):
+        self.is_open = False
+
+    def readline(self):
+        item = self.lines.pop(0) if self.lines else b""
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+
+class TestDHTSerialDriver:
+    LOGGER = "slowcontrol.drivers.dht_serial"
+
+    @staticmethod
+    def _opener(*outcomes):
+        """serial.Serial replacement: each call returns/raises the next outcome."""
+        queue = list(outcomes)
+
+        def open_port(*args, **kwargs):
+            item = queue.pop(0)
+            if isinstance(item, Exception):
+                raise item
+            return item
+        return open_port
+
+    def _warnings(self, caplog):
+        return [r.getMessage() for r in caplog.records
+                if r.name == self.LOGGER and r.levelname == "WARNING"]
+
+    def test_missing_port_at_startup_retries_with_one_warning(self, mock_mqtt, caplog):
+        import serial
+        from slowcontrol.drivers.dht_serial import DHTSerialDriver
+
+        missing = serial.SerialException("could not open port: No such file or directory")
+        opener = self._opener(missing, missing, missing, _FakePort([b"45.2,297.4\n"]))
+        caplog.set_level("INFO", logger=self.LOGGER)
+        with patch("serial.Serial", side_effect=opener):
+            d = DHTSerialDriver("humidity", {"port": "/dev/nope"}, mock_mqtt)
+            d.connect()                      # what start() calls: must not raise
+            assert d.read() == {}            # still missing
+            assert d.read() == {}            # still missing
+            assert d.read() == {"humidity": 45.2, "temperature": 297.4}
+        warnings = self._warnings(caplog)
+        assert len(warnings) == 1 and "unavailable" in warnings[0]
+        assert any("is back" in r.getMessage() for r in caplog.records)
+
+    def test_start_with_missing_port_still_polls(self, mock_mqtt):
+        import serial
+        from slowcontrol.drivers.dht_serial import DHTSerialDriver
+
+        with patch("serial.Serial", side_effect=serial.SerialException("missing")):
+            d = DHTSerialDriver("humidity", {}, mock_mqtt, poll_interval=0.02)
+            d.start()
+            try:
+                assert d.is_running
+            finally:
+                d.stop()
+
+    def test_drop_mid_run_warns_once_then_recovers(self, mock_mqtt, caplog):
+        import serial
+        from slowcontrol.drivers.dht_serial import DHTSerialDriver
+
+        dropped = serial.SerialException("device reports readiness to read but returned no data")
+        missing = serial.SerialException("could not open port")
+        opener = self._opener(_FakePort([b"40.0,296.0\n", dropped]),
+                              missing, missing, _FakePort([b"41.0,296.5\n"]))
+        caplog.set_level("INFO", logger=self.LOGGER)
+        with patch("serial.Serial", side_effect=opener):
+            d = DHTSerialDriver("humidity", {}, mock_mqtt)
+            d.connect()
+            results = [d.read() for _ in range(5)]
+        assert results == [{"humidity": 40.0, "temperature": 296.0}, {}, {}, {},
+                           {"humidity": 41.0, "temperature": 296.5}]
+        warnings = self._warnings(caplog)
+        assert len(warnings) == 1 and "connection lost" in warnings[0]

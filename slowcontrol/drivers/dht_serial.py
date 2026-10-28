@@ -17,6 +17,10 @@ class DHTSerialDriver(SensorDriver):
 
     Expects the Arduino to send lines in the format ``humidity,temperature``
     (e.g. ``45.2,22.1``).
+
+    A missing or dropped port (USB adapter unplugged / re-enumerating) is not
+    fatal: the driver keeps polling and reopens the port as soon as it is
+    back, logging one warning per outage rather than one per poll.
     """
 
     def __init__(
@@ -30,12 +34,27 @@ class DHTSerialDriver(SensorDriver):
         self._port = config.get("port", "/dev/serial/by-id/usb-FTDI_FT232R_USB_UART_AK06FZMI-if00-port0")
         self._baud = config.get("baud", 9600)
         self._ser = None
+        self._outage = False   # warned about the current outage already
 
     def connect(self) -> None:
+        """Open the port.  Never raises: on failure the port stays closed and
+        read() retries each poll (so a missing adapter at startup is fine)."""
         import serial
 
-        self._ser = serial.Serial(self._port, self._baud, timeout=2)
-        self._ser.reset_input_buffer()
+        try:
+            ser = serial.Serial(self._port, self._baud, timeout=2)
+            ser.reset_input_buffer()
+        except (serial.SerialException, OSError) as exc:
+            self._ser = None
+            if not self._outage:
+                self._outage = True
+                log.warning("DHT serial port %s unavailable (%s); retrying every poll",
+                            self._port, exc)
+            return
+        self._ser = ser
+        if self._outage:
+            self._outage = False
+            log.info("DHT serial port %s is back", self._port)
         log.info("DHT serial connected on %s @ %d baud", self._port, self._baud)
 
     def disconnect(self) -> None:
@@ -50,11 +69,9 @@ class DHTSerialDriver(SensorDriver):
         import serial
 
         if not self._ser:
-            # Port was lost (USB re-enumeration) — retry once per poll.
-            try:
-                self.connect()
-            except serial.SerialException as exc:
-                log.warning("DHT reconnect failed: %s", exc)
+            # Port missing or lost (USB re-enumeration) — retry once per poll.
+            self.connect()
+            if not self._ser:
                 return {}
 
         line = ""
@@ -74,7 +91,8 @@ class DHTSerialDriver(SensorDriver):
         except (ValueError, UnicodeDecodeError):
             log.warning("Failed to parse DHT data: %s", line)
         except serial.SerialException as exc:
-            log.warning("DHT serial connection lost (%s); reconnecting next poll", exc)
+            log.warning("DHT serial connection lost (%s); retrying every poll", exc)
+            self._outage = True   # the warning above covers this outage
             self.disconnect()
 
         return {}
