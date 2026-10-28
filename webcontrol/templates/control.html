@@ -176,63 +176,24 @@
 
   <!-- ─── Autovalve ───────────────────────────────────────────── -->
   <section class="card">
-    <h2>Autovalve</h2>
+    <h2>Autovalve (LN₂ fill)</h2>
     <div class="row"><span class="kv"><span class="k">state</span><span id="av-state" class="num">–</span></span>
-                    <span class="kv"><span class="k">mode</span><span id="av-mode" class="num">–</span></span>
-                    <span class="kv"><span class="k">enabled</span><span id="av-en" class="num">–</span></span></div>
-    <div class="row"><span class="lbl">enable</span>
-      <button id="av-en-on"  onclick="setAutovalveEnabled(true)">enable (auto)</button>
-      <button id="av-en-off" class="danger" onclick="setAutovalveEnabled(false)">disable (manual)</button>
-      <small class="hint" style="margin:0 0 0 .4rem">"disable" parks the autovalve and closes the LN₂ valve;
-        "enable" puts it back into control using the active trigger mode below.</small></div>
-    <div class="row"><span class="lbl">trigger mode</span>
-      <button id="av-m-grad"   onclick="setAutovalveMode('gradient')">gradient</button>
-      <button id="av-m-thresh" onclick="setAutovalveMode('threshold')">threshold</button>
-      <small class="hint" style="margin:0 0 0 .4rem">gradient = trigger fills from level drop rate;
-        threshold = trigger when watched channels drop below a fixed voltage.</small></div>
+                    <span class="kv"><span class="k">valve open</span><span id="av-open" class="num">–</span></span>
+                    <span class="kv"><span class="k">last close</span><span id="av-why" class="num">–</span></span></div>
 
-    <!-- ─── Autovalve tunables ──────────────────────────────────── -->
+    <!-- ─── Auto-close ──────────────────────────────────────────── -->
     <div class="blk">
-      <div class="row"><span class="title">Tuning</span>
-        <small class="hint" style="margin:0 0 0 .4rem">Each Apply sends just that field;
-          empty fields keep the current value. Bad values are rejected (see service log).</small></div>
-      <div class="row"><span class="lbl">fill trigger (V)</span>
-        <input type="number" step="0.1" id="av-fl-in" style="width:7rem">
-        <button class="act" onclick="setAutovalveParam('fill_trigger', 'av-fl-in')">Apply</button>
-        <span id="av-fl-msg" class="cur"></span>
-        <small class="hint" style="margin:0 0 0 .4rem">start a fill in threshold mode when any watched channel drops below this</small></div>
-      <div class="row"><span class="lbl">full-tank (V)</span>
-        <input type="number" step="0.1" id="av-ft-in" style="width:7rem">
-        <button class="act" onclick="setAutovalveParam('full_tank', 'av-ft-in')">Apply</button>
-        <span id="av-ft-msg" class="cur"></span>
-        <small class="hint" style="margin:0 0 0 .4rem">stop the current fill once any watched channel reaches this</small></div>
-      <div class="row"><span class="lbl">overfill thresh (V)</span>
-        <input type="number" step="0.1" id="av-ot-in" style="width:7rem">
-        <button class="act" onclick="setAutovalveParam('overfill_threshold', 'av-ot-in')">Apply</button>
-        <span id="av-ot-msg" class="cur"></span></div>
-      <div class="row"><span class="lbl">gradient trig (V/s)</span>
-        <input type="text"   id="av-gt-in" style="width:7rem" placeholder="e.g. -1e-4">
-        <button class="act" onclick="setAutovalveParam('gradient_trigger', 'av-gt-in')">Apply</button>
-        <span id="av-gt-msg" class="cur"></span></div>
-      <div class="row"><span class="lbl">fill timeout (s)</span>
+      <div class="row"><span class="title">Auto-close</span>
+        <button id="av-ac-on"  onclick="setAutovalveSwitch('autoclose', true)">on</button>
+        <button id="av-ac-off" class="danger" onclick="setAutovalveSwitch('autoclose', false)">off</button>
+        <span id="av-ac-msg" class="cur"></span></div>
+      <small class="hint">Closes the LN₂ valve, whoever opened it (auto-fill or your manual "open"), as soon as
+        <b>any</b> condition below holds. On at boot. Turning it off also turns auto-fill off.</small>
+      <div class="row"><span class="lbl">fill timer (s)</span>
         <input type="number" step="1" id="av-fto-in" style="width:7rem">
         <button class="act" onclick="setAutovalveParam('fill_timeout', 'av-fto-in')">Apply</button>
-        <span id="av-fto-msg" class="cur"></span></div>
-      <div class="row"><span class="lbl">cooldown (s)</span>
-        <input type="number" step="1" id="av-cd-in" style="width:7rem">
-        <button class="act" onclick="setAutovalveParam('cooldown', 'av-cd-in')">Apply</button>
-        <span id="av-cd-msg" class="cur"></span></div>
-    </div>
-
-    <!-- ─── Channel selection ──────────────────────────────────── -->
-    <div class="blk">
-      <div class="row"><span class="title">Watched channels</span>
-        <small class="hint" style="margin:0 0 0 .4rem">level_channels are scanned in the active trigger mode;
-          overfill_channel is the safety-abort sensor (RES7 by default).</small></div>
-      <div class="row"><span class="lbl">level channels</span>
-        <span id="av-lc-boxes" style="display:flex; gap:.6rem; flex-wrap:wrap"></span>
-        <button class="act" onclick="applyAutovalveLevelChannels()">Apply selection</button>
-        <span id="av-lc-msg" class="cur"></span></div>
+        <span id="av-fto-msg" class="cur"></span>
+        <small class="hint" style="margin:0 0 0 .4rem">close this long after the valve opened</small></div>
       <div class="row"><span class="lbl">overfill channel</span>
         <select id="av-oc-in">
           <option value="RES1">RES1</option>
@@ -245,6 +206,56 @@
         </select>
         <button class="act" onclick="setAutovalveParam('overfill_channel', 'av-oc-in')">Apply</button>
         <span id="av-oc-msg" class="cur"></span></div>
+      <div class="row"><span class="lbl">overfill above (V)</span>
+        <input type="number" step="0.1" id="av-ot-in" style="width:7rem">
+        <button class="act" onclick="setAutovalveParam('overfill_threshold', 'av-ot-in')">Apply</button>
+        <span id="av-ot-msg" class="cur"></span></div>
+      <div class="row"><span class="lbl">close channels</span>
+        <span id="av-cc-boxes" style="display:flex; gap:.6rem; flex-wrap:wrap"></span>
+        <button class="act" onclick="applyAutovalveChannels('close')">Apply selection</button>
+        <span id="av-cc-msg" class="cur"></span>
+        <small class="hint" style="margin:0 0 0 .4rem">optional; any one at/above the level below closes (can close before overfill)</small></div>
+      <div class="row"><span class="lbl">close at/above (V)</span>
+        <input type="number" step="0.1" id="av-ft-in" style="width:7rem">
+        <button class="act" onclick="setAutovalveParam('full_tank', 'av-ft-in')">Apply</button>
+        <span id="av-ft-msg" class="cur"></span></div>
+    </div>
+
+    <!-- ─── Auto-fill ───────────────────────────────────────────── -->
+    <div class="blk">
+      <div class="row"><span class="title">Auto-fill</span>
+        <button id="av-af-on"  onclick="setAutovalveSwitch('autofill', true)">on</button>
+        <button id="av-af-off" class="danger" onclick="setAutovalveSwitch('autofill', false)">off</button>
+        <span id="av-af-msg" class="cur"></span></div>
+      <small class="hint">Opens the LN₂ valve when <b>all</b> conditions below hold, the cooldown has passed, and no
+        auto-close condition is already true. Off at boot. Turning it on also turns auto-close on.</small>
+      <div class="row"><span class="lbl">trigger mode</span>
+        <button id="av-m-grad"   onclick="setAutovalveMode('gradient')">gradient</button>
+        <button id="av-m-thresh" onclick="setAutovalveMode('threshold')">threshold</button>
+        <small class="hint" style="margin:0 0 0 .4rem">threshold = every fill channel below the level;
+          gradient = every fill channel falling faster than the rate</small></div>
+      <div class="row"><span class="lbl">fill channels</span>
+        <span id="av-fc-boxes" style="display:flex; gap:.6rem; flex-wrap:wrap"></span>
+        <button class="act" onclick="applyAutovalveChannels('fill')">Apply selection</button>
+        <span id="av-fc-msg" class="cur"></span>
+        <small class="hint" style="margin:0 0 0 .4rem">all selected must meet the condition</small></div>
+      <div class="row"><span class="lbl">fill below (V)</span>
+        <input type="number" step="0.1" id="av-fl-in" style="width:7rem">
+        <button class="act" onclick="setAutovalveParam('fill_trigger', 'av-fl-in')">Apply</button>
+        <span id="av-fl-msg" class="cur"></span>
+        <small class="hint" style="margin:0 0 0 .4rem">threshold mode</small></div>
+      <div class="row"><span class="lbl">gradient trig (V/s)</span>
+        <input type="text"   id="av-gt-in" style="width:7rem" placeholder="e.g. -1e-4">
+        <button class="act" onclick="setAutovalveParam('gradient_trigger', 'av-gt-in')">Apply</button>
+        <span id="av-gt-msg" class="cur"></span>
+        <small class="hint" style="margin:0 0 0 .4rem">gradient mode</small></div>
+      <div class="row"><span class="lbl">cooldown (s)</span>
+        <input type="number" step="1" id="av-cd-in" style="width:7rem">
+        <button class="act" onclick="setAutovalveParam('cooldown', 'av-cd-in')">Apply</button>
+        <span id="av-cd-msg" class="cur"></span>
+        <small class="hint" style="margin:0 0 0 .4rem">wait after any close before auto-filling again</small></div>
+      <small class="hint">Each Apply sends just that field; empty fields keep the current value. Bad values are
+        rejected (see service log).</small>
     </div>
   </section>
 
@@ -551,15 +562,20 @@ function applyLakeShoreRamp(){
 
 // ---- Autovalve ------------------------------------------------------------
 function updateAutovalve(){
-  const st = S("autovalve_state"), mo = S("autovalve_mode"), en = S("autovalve_enabled");
+  const st = S("autovalve_state"), mo = S("autovalve_mode");
+  const af = S("autovalve_autofill"), ac = S("autovalve_autoclose");
+  const op = S("autovalve_valve_open_s"), src = S("autovalve_fill_source");
+  const why = S("autovalve_last_close_reason");
   $("av-state").textContent = st && st.value != null ? String(st.value) : "–";
-  $("av-mode").textContent  = mo && mo.value != null ? String(mo.value) : "–";
-  $("av-en").textContent    = en && en.value != null ? (en.value ? "yes" : "no") : "–";
-  // Highlight enable/disable per the enabled flag
-  const isEnabled = en && en.value === true;
-  $("av-en-on").className   = isEnabled ? "on" : "";
-  $("av-en-off").className  = isEnabled === false ? "warn" : "danger";
-  // Highlight trigger mode (only meaningful when enabled)
+  $("av-open").textContent  = op && op.value != null
+      ? `${Math.round(op.value)} s (${src && src.value ? src.value : "?"})` : "closed";
+  $("av-why").textContent   = why && why.value ? String(why.value) : "–";
+  const sw = (onId, offId, s) => {
+    $(onId).className  = s && s.value === true ? "on" : "";
+    $(offId).className = s && s.value === false ? "warn" : "danger";
+  };
+  sw("av-ac-on", "av-ac-off", ac);
+  sw("av-af-on", "av-af-off", af);
   const m = mo && mo.value;
   $("av-m-grad").className   = m === "gradient"  ? "on" : "";
   $("av-m-thresh").className = m === "threshold" ? "on" : "";
@@ -567,14 +583,23 @@ function updateAutovalve(){
 function setAutovalveMode(mode){
   cmd("ets/commands/autovalve/mode", {mode});
 }
-function setAutovalveEnabled(on){
-  // Controller treats {mode:"auto"} as enable, {mode:"manual"} as disable+close.
-  if (!on && !confirm("Disable autovalve? This also closes the LN₂ valve.")) return;
-  cmd("ets/commands/autovalve/mode", {mode: on ? "auto" : "manual"});
+function setAutovalveSwitch(which, on){
+  const msgId = which === "autoclose" ? "av-ac-msg" : "av-af-msg";
+  if (which === "autoclose" && !on &&
+      !confirm("Turn auto-close OFF?\n\nThe LN₂ valve will no longer be closed automatically " +
+               "(no fill timer, no overfill close from the autovalve; the interlock still acts). " +
+               "Auto-fill will also be turned off."))
+    return;
+  if (which === "autofill" && on &&
+      !confirm("Turn auto-fill ON?\n\nThe LN₂ valve will open automatically whenever all fill " +
+               "conditions hold. Auto-close will be on."))
+    return;
+  cmd(`ets/commands/autovalve/${which}`, {enabled: on})
+    .then(ok => flash(msgId, ok ? `sent: ${on ? "on" : "off"}` : "FAILED", ok ? "" : "stale"));
 }
 
 // ---- Autovalve tunables ---------------------------------------------------
-const AV_LEVEL_CHANNEL_OPTS = ["RES1","RES2","RES3","RES4","RES5","RES6","RES7"];
+const AV_CHANNEL_OPTS = ["RES1","RES2","RES3","RES4","RES5","RES6","RES7"];
 const AV_SNAPSHOT_KEYS = {
   fill_trigger:       "autovalve_fill_trigger",
   full_tank:          "autovalve_full_tank",
@@ -584,12 +609,18 @@ const AV_SNAPSHOT_KEYS = {
   cooldown:           "autovalve_cooldown",
   overfill_channel:   "autovalve_overfill_channel",
 };
+// Channel lists live in the raw status payload (lists aren't snapshot
+// scalars); tick() copies them here.
+const AV_CHANNELS = {fill: null, close: null};
+const AV_BOX = {fill: "fc", close: "cc"};
 let avBuilt = false;
 function buildAutovalveCheckboxes(){
-  $("av-lc-boxes").innerHTML = AV_LEVEL_CHANNEL_OPTS.map(c =>
-    `<label style="cursor:pointer; white-space:nowrap; font-weight:400">`
-    + `<input type="checkbox" class="av-lc" value="${c}"> ${c}</label>`
-  ).join("");
+  for (const [kind, k] of Object.entries(AV_BOX)){
+    $(`av-${k}-boxes`).innerHTML = AV_CHANNEL_OPTS.map(c =>
+      `<label style="cursor:pointer; white-space:nowrap; font-weight:400">`
+      + `<input type="checkbox" class="av-${k}" value="${c}"> ${c}</label>`
+    ).join("");
+  }
   avBuilt = true;
 }
 
@@ -615,17 +646,15 @@ function updateAutovalveTuning(){
   if (ocSt && ocSt.value && document.activeElement !== $("av-oc-in")) {
     if ($("av-oc-in").value !== ocSt.value) $("av-oc-in").value = ocSt.value;
   }
-  // Level channels: the list lives in the raw status (it's not a scalar),
-  // synced in tick() into AV_LAST_LEVEL_CHANNELS.  Don't touch the boxes
-  // while the operator is editing them.
-  const lc = AV_LAST_LEVEL_CHANNELS;
-  const focusInBoxes = document.activeElement && document.activeElement.classList?.contains("av-lc");
-  if (lc && !focusInBoxes){
-    const want = new Set(lc);
-    document.querySelectorAll(".av-lc").forEach(cb => { cb.checked = want.has(cb.value); });
+  // Channel checkboxes: don't touch a set while the operator is editing it.
+  for (const [kind, k] of Object.entries(AV_BOX)){
+    const list = AV_CHANNELS[kind];
+    const editing = document.activeElement && document.activeElement.classList?.contains(`av-${k}`);
+    if (!list || editing) continue;
+    const want = new Set(list);
+    document.querySelectorAll(`.av-${k}`).forEach(cb => { cb.checked = want.has(cb.value); });
   }
 }
-let AV_LAST_LEVEL_CHANNELS = null;        // updated each tick from raw status payload
 
 function setAutovalveParam(paramName, inputId){
   const raw = $(inputId).value.trim();
@@ -646,12 +675,13 @@ function paramKey(name){
   return {fill_trigger:"fl", full_tank:"ft", overfill_threshold:"ot", gradient_trigger:"gt",
           fill_timeout:"fto", cooldown:"cd", overfill_channel:"oc"}[name] || name;
 }
-function applyAutovalveLevelChannels(){
-  const selected = [...document.querySelectorAll(".av-lc:checked")].map(cb => cb.value);
-  if (selected.length === 0){ flash("av-lc-msg", "pick at least one", "stale"); return; }
-  cmd("ets/commands/autovalve/set", {level_channels: selected})
-    .then(ok => flash("av-lc-msg",
-                      ok ? `sent: [${selected.join(", ")}]` : "FAILED",
+function applyAutovalveChannels(kind){
+  const k = AV_BOX[kind];
+  const selected = [...document.querySelectorAll(`.av-${k}:checked`)].map(cb => cb.value);
+  if (kind === "fill" && selected.length === 0){ flash(`av-${k}-msg`, "pick at least one", "stale"); return; }
+  cmd("ets/commands/autovalve/set", {[`${kind}_channels`]: selected})
+    .then(ok => flash(`av-${k}-msg`,
+                      ok ? `sent: [${selected.join(", ") || "none"}]` : "FAILED",
                       ok ? "" : "stale"));
 }
 
@@ -718,12 +748,12 @@ async function tick(){
   $("p-mq").textContent = "mqtt: "+(d.mqtt_connected ? "connected" : "DOWN");
   $("p-mq").className = "pill " + (d.mqtt_connected ? "ok" : "bad");
 
-  // Level-channels list lives in the raw status payload (it's a list,
-  // not a scalar, so it isn't in the consolidated snapshot).
+  // Fill/close channel lists live in the raw status payload (they're lists,
+  // not scalars, so they aren't in the consolidated snapshot).
   const avRaw = d.state && d.state["ets/status/autovalve"];
-  if (avRaw && avRaw.payload && Array.isArray(avRaw.payload.level_channels)){
-    AV_LAST_LEVEL_CHANNELS = avRaw.payload.level_channels;
-  }
+  const avP = avRaw && avRaw.payload;
+  if (avP && Array.isArray(avP.fill_channels))  AV_CHANNELS.fill  = avP.fill_channels;
+  if (avP && Array.isArray(avP.close_channels)) AV_CHANNELS.close = avP.close_channels;
 
   updateRelays();
   updateLakeShore();
@@ -731,6 +761,7 @@ async function tick(){
   updateAutovalveTuning();
   updateHumidity();
 }
+buildAutovalveCheckboxes();
 tick(); setInterval(tick, 1500);
 </script>
 </body>

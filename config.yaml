@@ -59,21 +59,26 @@ relays:
 # ── Autonomous Controllers ────────────────────────────────────
 controllers:
 
+  # Auto-fill is always OFF at boot and auto-close always ON; both are switched
+  # from the control page.  Values below are defaults — anything changed at
+  # runtime is persisted in runtime/autovalve.yaml and wins over these.
   autovalve:
     enabled: true                    # register the controller in the service
-    start_enabled: false             # do NOT auto-arm on service restart
-    mode: threshold                  # gradient | threshold
-    level_channels: [RES1, RES2]
-    overfill_channel: RES7
     valve_relay: ln2_valve
-    fill_timeout: 600               # seconds
-    cooldown: 900                   # seconds
-    overfill_threshold: 9.8         # volts — safety abort above this
-    overfill_close: 9.0             # volts — overfill clears below this
-    full_tank: 9.5                  # volts — fill stops normally at this
-    fill_trigger: 4.5               # volts — start fill below this (threshold mode)
-    gradient_trigger: -1.0e-4       # V/s   — start fill below this (gradient mode)
     scan_interval: 1.0              # seconds
+    # auto-close: closes the valve (whoever opened it) when ANY of these hold
+    fill_timeout: 600               # seconds — fill timer, from valve open
+    overfill_channel: RES7
+    overfill_threshold: 9.8         # volts — close above this
+    overfill_close: 9.0             # volts — overfill clears below this (reported only)
+    close_channels: []              # optional extra channels that close at full_tank
+    full_tank: 9.5                  # volts — a close channel at/above this closes
+    # auto-fill: opens the valve when ALL of these hold
+    mode: threshold                  # gradient | threshold
+    fill_channels: [RES1, RES2]      # every one must be below fill_trigger
+    fill_trigger: 4.5               # volts — (threshold mode)
+    gradient_trigger: -1.0e-4       # V/s   — every one falling faster (gradient mode)
+    cooldown: 900                   # seconds — after any close, before auto-fill may open
 
   humidity_pid:
     enabled: true

@@ -1,4 +1,20 @@
-"""Autonomous LN2 fill-valve controller (state machine)."""
+"""Autonomous LN2 fill-valve controller: separate auto-fill and auto-close.
+
+Auto-close (on at boot) supervises the LN2 valve whoever opened it — the
+auto-fill, or an operator pressing "open" — and closes it as soon as ANY
+close condition holds:
+  * the fill timer (fill_timeout) has run out since the valve opened,
+  * the overfill channel is above overfill_threshold,
+  * any of the optional close_channels is at or above full_tank.
+
+Auto-fill (always off at boot) opens the valve when ALL fill conditions
+hold: every fill channel below fill_trigger (threshold mode) or falling
+faster than gradient_trigger (gradient mode), the cooldown since the last
+close has elapsed, and no close condition is already active.
+
+There is never an automated fill without automated close: turning auto-fill
+on turns auto-close on, and turning auto-close off turns auto-fill off.
+"""
 
 from __future__ import annotations
 
@@ -20,96 +36,109 @@ log = logging.getLogger(__name__)
 
 
 class FillState(Enum):
-    WAITING = "WAITING"
-    FILLING = "FILLING"
-    COOLDOWN = "COOLDOWN"
+    WAITING = "WAITING"     # valve closed; auto-fill may open it
+    FILLING = "FILLING"     # valve open (auto-fill or manual)
+    COOLDOWN = "COOLDOWN"   # valve closed recently; auto-fill holds off
+
+
+# How long to wait for the relay to confirm an auto-fill "open" before retrying.
+_OPEN_CONFIRM_S = 5.0
 
 
 @register_controller("autovalve")
 class AutovalveController(Controller):
-    """LN2 fill-valve state machine.
-
-    Monitors liquid-level sensor gradients (or thresholds) to decide when
-    to open / close the fill valve.  Publishes relay commands over MQTT.
+    """LN2 fill valve: auto-fill (all-of open conditions) plus auto-close
+    (any-of close conditions).  Publishes relay commands over MQTT.
     """
 
     def __init__(self, name: str, config: dict[str, Any], mqtt):
         super().__init__(name, config, mqtt)
 
-        # Config
-        self._mode = config.get("mode", "gradient")
-        self._level_channels: list[str] = config.get(
-            "level_channels", ["RES1", "RES2"]
-        )
-        self._overfill_channel: str = config.get("overfill_channel", "RES7")
         self._valve_relay: str = config.get("valve_relay", "ln2_valve")
+        self._scan_interval: float = config.get("scan_interval", 1.0)
+
+        # Auto-close conditions (any one closes the valve)
         self._fill_timeout: float = config.get("fill_timeout", 600)
-        self._cooldown_time: float = config.get("cooldown", 900)
+        self._overfill_channel: str = config.get("overfill_channel", "RES7")
         self._overfill_threshold: float = config.get("overfill_threshold", 9.8)
-        self._overfill_close: float = config.get("overfill_close", 9.0)
+        self._overfill_close: float = config.get("overfill_close", 9.0)  # reported only
+        self._close_channels: list[str] = list(config.get("close_channels", []))
         self._full_tank: float = config.get("full_tank", 9.5)
-        # Voltage below which threshold-mode starts a fill.  Previously this
-        # was implicitly `full_tank * 0.5` inside _check_threshold; it's now
-        # an explicit tunable that defaults to that same half-of-full value
-        # for backwards compatibility when config.yaml doesn't set it.
+
+        # Auto-fill conditions (all must hold to open the valve).
+        # `level_channels` is the pre-split name, still accepted.
+        self._mode: str = config.get("mode", "threshold")
+        self._fill_channels: list[str] = list(
+            config.get("fill_channels", config.get("level_channels", ["RES1"]))
+        )
         self._fill_trigger: float = config.get(
             "fill_trigger", self._full_tank * 0.5
         )
         self._gradient_trigger: float = config.get("gradient_trigger", -1e-4)
-        self._scan_interval: float = config.get("scan_interval", 1.0)
+        self._cooldown_time: float = config.get("cooldown", 900)
 
-        # Runtime state.  start_enabled defaults to False so a service restart
-        # (planned or after a power cut) does NOT auto-arm the autovalve;
-        # operator must explicitly re-enable from the control page.  Override
-        # with `start_enabled: true` in config.yaml if you ever want the old
-        # auto-arm behaviour back.
+        # On/off switches.  Deliberately neither read from config nor
+        # persisted: auto-fill is ALWAYS off at boot (an operator must arm
+        # it), auto-close is always on.
+        self._autofill = False
+        self._autoclose = True
+        if config.get("start_enabled"):
+            log.warning("autovalve: start_enabled is ignored; auto-fill is "
+                        "always off at boot")
+
+        # Valve tracking, driven by ets/status/relays/<valve_relay>.
+        self._valve_open: bool | None = None     # None until the relay reports
+        self._opened_at: float | None = None
+        self._opened_by_autofill = False
+        self._open_sent_at: float | None = None  # auto-fill "open" awaiting confirm
+        self._close_reason: str | None = None    # set once we decide to close
+        self._last_close_at: float | None = None
+        self._last_close_reason: str | None = None
         self._state = FillState.WAITING
-        self._fill_start: float | None = None
-        self._last_fill_end: float | None = None
-        self._enabled = bool(config.get("start_enabled", False))
 
-        # Rolling gradient buffer (≈60 samples at 1 Hz)
+        # Rolling gradient buffer per fill channel (≈60 samples at 1 Hz)
         self._level_history: dict[str, deque] = {
-            ch: deque(maxlen=60) for ch in self._level_channels
+            ch: deque(maxlen=60) for ch in self._fill_channels
         }
-        self._overfill_value = 0.0
         self._latest_levels: dict[str, float] = {}
 
+        self._lock = threading.RLock()
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
 
         # Persisted runtime state.  Path defaults to runtime/autovalve.yaml
         # under the working dir (the systemd unit sets WorkingDirectory=
         # /home/pi/ETS-pythonSLOWDAQ).  Override with ETS_RUNTIME_DIR.
-        # mode + tunables (NOT enabled — fail-safe stays off across restarts)
-        # are written on every change and reapplied here over the config
-        # defaults set above.
+        # mode + tunables (NOT the on/off switches) are written on every
+        # change and reapplied here over the config defaults set above.
         runtime_dir = Path(os.environ.get("ETS_RUNTIME_DIR", "runtime"))
         self._persist_path = runtime_dir / "autovalve.yaml"
         self._load_persisted_state()
+
+    @property
+    def _valve_topic(self) -> str:
+        return f"ets/status/relays/{self._valve_relay}"
 
     # ── lifecycle ──────────────────────────────────────────────
 
     def start(self) -> None:
         super().start()
         self.mqtt.subscribe("ets/sensors/#", self._on_sensor_data)
-        self.mqtt.subscribe(
-            "ets/commands/autovalve/mode", self._on_mode_command
-        )
-        self.mqtt.subscribe(
-            "ets/commands/autovalve/set", self._on_set_command
-        )
+        self.mqtt.subscribe(self._valve_topic, self._on_valve_status)
+        self.mqtt.subscribe("ets/commands/autovalve/autofill", self._on_autofill_command)
+        self.mqtt.subscribe("ets/commands/autovalve/autoclose", self._on_autoclose_command)
+        self.mqtt.subscribe("ets/commands/autovalve/mode", self._on_mode_command)
+        self.mqtt.subscribe("ets/commands/autovalve/set", self._on_set_command)
         self._stop.clear()
         self._thread = threading.Thread(
             target=self._control_loop, name="autovalve", daemon=True
         )
         self._thread.start()
         # Republish so the retained status reflects the current (post-restart)
-        # state — without this, operators see the stale FILLING/COOLDOWN value
-        # from before the bounce until the next state transition.
+        # state rather than whatever was retained before the bounce.
         self.publish_status()
-        log.info("Autovalve controller started (mode=%s, enabled=%s)",
-                 self._mode, self._enabled)
+        log.info("Autovalve controller started (auto-fill=OFF, auto-close=ON, "
+                 "fill mode=%s)", self._mode)
 
     def stop(self) -> None:
         self._stop.set()
@@ -119,26 +148,37 @@ class AutovalveController(Controller):
         super().stop()
 
     def get_state(self) -> dict[str, Any]:
-        return {
-            "state": self._state.value,
-            "mode": self._mode,
-            "enabled": self._enabled,
-            "overfill_value": self._overfill_value,
-            "levels": dict(self._latest_levels),
-            "fill_start": self._fill_start,
-            # Tunables — exposed so the GUI can read them back.  Each is also
-            # settable via ets/commands/autovalve/set {<param>: <value>}.
-            "level_channels": list(self._level_channels),
-            "overfill_channel": self._overfill_channel,
-            "fill_trigger": self._fill_trigger,
-            "full_tank": self._full_tank,
-            "overfill_threshold": self._overfill_threshold,
-            "overfill_close": self._overfill_close,
-            "gradient_trigger": self._gradient_trigger,
-            "fill_timeout": self._fill_timeout,
-            "cooldown": self._cooldown_time,
-            "ts": time.time(),
-        }
+        now = time.time()
+        with self._lock:
+            valve_open = self._valve_open
+            return {
+                "state": self._state.value,
+                "mode": self._mode,
+                "autofill": self._autofill,
+                "autoclose": self._autoclose,
+                "valve_open": valve_open,
+                "valve_open_s": (round(now - self._opened_at, 1)
+                                 if valve_open and self._opened_at else None),
+                "fill_source": (("auto-fill" if self._opened_by_autofill else "manual")
+                                if valve_open else None),
+                "last_close_reason": self._last_close_reason,
+                "last_close_at": self._last_close_at,
+                "overfill_value": self._latest_levels.get(self._overfill_channel),
+                "levels": dict(self._latest_levels),
+                # Tunables — exposed so the GUI can read them back.  Each is also
+                # settable via ets/commands/autovalve/set {<param>: <value>}.
+                "fill_channels": list(self._fill_channels),
+                "fill_trigger": self._fill_trigger,
+                "gradient_trigger": self._gradient_trigger,
+                "cooldown": self._cooldown_time,
+                "close_channels": list(self._close_channels),
+                "full_tank": self._full_tank,
+                "fill_timeout": self._fill_timeout,
+                "overfill_channel": self._overfill_channel,
+                "overfill_threshold": self._overfill_threshold,
+                "overfill_close": self._overfill_close,
+                "ts": now,
+            }
 
     # ── MQTT handlers ──────────────────────────────────────────
 
@@ -154,43 +194,132 @@ class AutovalveController(Controller):
 
         self._latest_levels[channel] = value
 
-        if channel in self._level_history:
-            self._level_history[channel].append((ts, value))
+        history = self._level_history.get(channel)
+        if history is not None:
+            history.append((ts, value))
 
-        if channel == self._overfill_channel:
-            self._overfill_value = value
+    def _on_valve_status(self, topic: str, payload: dict) -> None:
+        state = payload.get("state")
+        if state not in ("open", "closed"):
+            return
+        is_open = state == "open"
+        with self._lock:
+            now = time.time()
+            was_open = self._valve_open
+            self._valve_open = is_open
+            if is_open and not was_open:
+                self._opened_at = now
+                self._opened_by_autofill = self._open_sent_at is not None
+                self._open_sent_at = None
+                self._close_reason = None
+                self._state = FillState.FILLING
+                log.info(
+                    "Autovalve: LN2 valve opened (%s); auto-close %s",
+                    "auto-fill" if self._opened_by_autofill else "manual",
+                    f"ON, timer {self._fill_timeout:.0f} s" if self._autoclose
+                    else "OFF - it will NOT close automatically",
+                )
+            elif was_open and not is_open:
+                held = now - self._opened_at if self._opened_at else None
+                reason = self._close_reason
+                if reason is None:
+                    # Closed by someone else: the interlock usually beats our
+                    # 1 Hz scan on overfill, so say which condition was active.
+                    active = self._close_condition(now)
+                    reason = (f"closed externally while {active}" if active
+                              else "closed externally (manual or interlock)")
+                self._last_close_at = now
+                self._last_close_reason = reason
+                self._opened_at = None
+                self._opened_by_autofill = False
+                self._close_reason = None
+                self._state = FillState.COOLDOWN
+                log.info("Autovalve: LN2 valve closed after %s: %s -> COOLDOWN",
+                         f"{held:.0f} s" if held is not None else "?", reason)
+        self.publish_status()
+
+    def _on_autofill_command(self, topic: str, payload: dict) -> None:
+        enabled = payload.get("enabled")
+        if not isinstance(enabled, bool):
+            log.warning("autovalve/autofill: want {\"enabled\": true|false}, got %r", payload)
+            return
+        self._set_autofill(enabled)
+        self.publish_status()
+
+    def _on_autoclose_command(self, topic: str, payload: dict) -> None:
+        enabled = payload.get("enabled")
+        if not isinstance(enabled, bool):
+            log.warning("autovalve/autoclose: want {\"enabled\": true|false}, got %r", payload)
+            return
+        self._set_autoclose(enabled)
+        self.publish_status()
 
     def _on_mode_command(self, topic: str, payload: dict) -> None:
+        """Fill-condition type (gradient | threshold), plus the pre-split
+        aliases auto (= auto-fill on) and manual (= auto-fill off)."""
         mode = payload.get("mode")
-        persisted_change = False
         if mode == "auto":
-            self._enabled = True
-            log.info("Autovalve enabled")
+            self._set_autofill(True)
         elif mode == "manual":
-            self._enabled = False
-            self._close_valve()
-            log.info("Autovalve disabled (manual mode)")
+            self._set_autofill(False)
         elif mode in ("gradient", "threshold"):
-            self._mode = mode
-            log.info("Autovalve mode → %s", mode)
-            persisted_change = True
-        self.publish_status()
-        if persisted_change:
+            with self._lock:
+                self._mode = mode
+            log.info("Autovalve: fill mode -> %s", mode)
             self._save_persisted_state()
+        else:
+            log.warning("autovalve/mode: unknown mode %r ignored", mode)
+            return
+        self.publish_status()
+
+    def _set_autofill(self, on: bool) -> None:
+        with self._lock:
+            if on:
+                if not self._autoclose:
+                    self._autoclose = True
+                    log.info("Autovalve: auto-close ON (required by auto-fill)")
+                if not self._autofill:
+                    self._autofill = True
+                    log.info("Autovalve: auto-fill ON")
+            elif self._autofill:
+                self._autofill = False
+                self._open_sent_at = None
+                log.info("Autovalve: auto-fill OFF")
+                if self._valve_open and self._opened_by_autofill:
+                    self._request_close("auto-fill switched off")
+
+    def _set_autoclose(self, on: bool) -> None:
+        with self._lock:
+            if on:
+                if not self._autoclose:
+                    self._autoclose = True
+                    log.info("Autovalve: auto-close ON")
+                return
+            if self._autofill:
+                # Never an automated fill without automated close.
+                self._set_autofill(False)
+            if self._autoclose:
+                self._autoclose = False
+                log.warning("Autovalve: auto-close OFF - the LN2 valve will not "
+                            "be closed automatically")
 
     # Whitelist of operator-tunable parameters: attribute name → coercer.
     # Times are seconds, thresholds are volts, channels are MQTT channel names
     # (the last segment of ets/sensors/<driver>/<channel>).
     _TUNABLES = {
+        # auto-fill
+        "fill_channels":      ("_fill_channels",     "channel_list"),
+        "level_channels":     ("_fill_channels",     "channel_list"),  # legacy name
         "fill_trigger":       ("_fill_trigger",      "float"),
-        "full_tank":          ("_full_tank",          "float"),
+        "gradient_trigger":   ("_gradient_trigger",  "float"),
+        "cooldown":           ("_cooldown_time",     "non_negative_float"),
+        # auto-close
+        "fill_timeout":       ("_fill_timeout",      "positive_float"),
+        "overfill_channel":   ("_overfill_channel",  "channel_str"),
         "overfill_threshold": ("_overfill_threshold", "float"),
         "overfill_close":     ("_overfill_close",    "float"),
-        "gradient_trigger":   ("_gradient_trigger",  "float"),
-        "fill_timeout":       ("_fill_timeout",      "positive_float"),
-        "cooldown":           ("_cooldown_time",     "non_negative_float"),
-        "level_channels":     ("_level_channels",    "channel_list"),
-        "overfill_channel":   ("_overfill_channel",  "channel_str"),
+        "close_channels":     ("_close_channels",    "channel_list_or_empty"),
+        "full_tank":          ("_full_tank",          "float"),
     }
 
     def _on_set_command(self, topic: str, payload: dict) -> None:
@@ -204,46 +333,39 @@ class AutovalveController(Controller):
             return
 
         applied: dict[str, Any] = {}
-        for key, raw in payload.items():
-            if key not in self._TUNABLES:
-                log.warning("autovalve/set: unknown param %r ignored", key)
-                continue
-            attr, kind = self._TUNABLES[key]
-            try:
-                value = self._coerce_tunable(kind, raw)
-            except (TypeError, ValueError) as exc:
-                log.warning("autovalve/set: rejected %s=%r (%s)", key, raw, exc)
-                continue
-
-            # Special: changing level_channels has to rebuild the history buffer
-            # so gradient mode doesn't compute on stale data from removed channels.
-            if attr == "_level_channels":
-                self._level_history = {
-                    ch: deque(self._level_history.get(ch, ()), maxlen=60)
-                    for ch in value
-                }
-
-            setattr(self, attr, value)
-            applied[key] = value
-            log.info("Autovalve param %s → %s", key, value)
+        with self._lock:
+            for key, raw in payload.items():
+                if key not in self._TUNABLES:
+                    log.warning("autovalve/set: unknown param %r ignored", key)
+                    continue
+                attr, kind = self._TUNABLES[key]
+                try:
+                    value = self._coerce_tunable(kind, raw)
+                except (TypeError, ValueError) as exc:
+                    log.warning("autovalve/set: rejected %s=%r (%s)", key, raw, exc)
+                    continue
+                self._apply_tunable(attr, value)
+                applied[key] = value
+                log.info("Autovalve param %s -> %s", key, value)
 
         if applied:
             self.publish_status()
             self._save_persisted_state()
 
-    # ── persistence ────────────────────────────────────────────
-    # Written whenever a tunable or mode changes; reloaded at startup so
-    # operator tweaks survive a service bounce.  `enabled` is deliberately
-    # NOT persisted: the autovalve must always come up disabled (see
-    # start_enabled note in __init__).
+    def _apply_tunable(self, attr: str, value: Any) -> None:
+        if attr == "_fill_channels":
+            # Keep history for channels that stay selected so gradient mode
+            # doesn't start from scratch; drop removed ones.
+            self._level_history = {
+                ch: deque(self._level_history.get(ch, ()), maxlen=60)
+                for ch in value
+            }
+        setattr(self, attr, value)
 
-    _PERSIST_KEYS = (
-        "mode",
-        "fill_trigger",
-        "full_tank", "overfill_threshold", "overfill_close",
-        "gradient_trigger", "fill_timeout", "cooldown",
-        "level_channels", "overfill_channel",
-    )
+    # ── persistence ────────────────────────────────────────────
+    # Written whenever a tunable or the fill mode changes; reloaded at
+    # startup so operator tweaks survive a service bounce.  The auto-fill /
+    # auto-close switches are deliberately NOT persisted (see __init__).
 
     def _load_persisted_state(self) -> None:
         path = self._persist_path
@@ -259,6 +381,8 @@ class AutovalveController(Controller):
         if not isinstance(data, dict):
             log.warning("autovalve: %s is malformed; using config defaults", path)
             return
+        if "fill_channels" in data:
+            data.pop("level_channels", None)   # pre-split name; new one wins
 
         applied = []
         for key, raw in data.items():
@@ -275,11 +399,7 @@ class AutovalveController(Controller):
             except (TypeError, ValueError) as exc:
                 log.warning("autovalve: persisted %s=%r rejected (%s)", key, raw, exc)
                 continue
-            if attr == "_level_channels":
-                # Reset history for the persisted channel set; no prior data
-                # exists yet at construction time.
-                self._level_history = {ch: deque(maxlen=60) for ch in value}
-            setattr(self, attr, value)
+            self._apply_tunable(attr, value)
             applied.append(key)
         if applied:
             log.info("autovalve: applied persisted runtime state from %s (%s)",
@@ -287,18 +407,20 @@ class AutovalveController(Controller):
 
     def _save_persisted_state(self) -> None:
         path = self._persist_path
-        data = {
-            "mode":               self._mode,
-            "fill_trigger":       self._fill_trigger,
-            "full_tank":          self._full_tank,
-            "overfill_threshold": self._overfill_threshold,
-            "overfill_close":     self._overfill_close,
-            "gradient_trigger":   self._gradient_trigger,
-            "fill_timeout":       self._fill_timeout,
-            "cooldown":           self._cooldown_time,
-            "level_channels":     list(self._level_channels),
-            "overfill_channel":   self._overfill_channel,
-        }
+        with self._lock:
+            data = {
+                "mode":               self._mode,
+                "fill_channels":      list(self._fill_channels),
+                "fill_trigger":       self._fill_trigger,
+                "gradient_trigger":   self._gradient_trigger,
+                "cooldown":           self._cooldown_time,
+                "fill_timeout":       self._fill_timeout,
+                "overfill_channel":   self._overfill_channel,
+                "overfill_threshold": self._overfill_threshold,
+                "overfill_close":     self._overfill_close,
+                "close_channels":     list(self._close_channels),
+                "full_tank":          self._full_tank,
+            }
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
             tmp = path.with_suffix(path.suffix + ".tmp")
@@ -306,8 +428,8 @@ class AutovalveController(Controller):
                 f.write("# Autovalve runtime state — written automatically when a\n"
                         "# tunable or mode is changed via ets/commands/autovalve/{set,mode}.\n"
                         "# Delete this file to revert to the defaults in config.yaml.\n"
-                        "# `enabled` is intentionally NOT persisted — the autovalve must\n"
-                        "# always come up disabled (fail-safe).\n")
+                        "# The auto-fill / auto-close switches are intentionally NOT\n"
+                        "# persisted: auto-fill always boots OFF, auto-close ON.\n")
                 yaml.safe_dump(data, f, default_flow_style=False, sort_keys=False)
             os.replace(tmp, path)
         except OSError as exc:
@@ -333,11 +455,11 @@ class AutovalveController(Controller):
             if not s:
                 raise ValueError("channel name cannot be empty")
             return s
-        if kind == "channel_list":
+        if kind in ("channel_list", "channel_list_or_empty"):
             if not isinstance(raw, (list, tuple)):
                 raise TypeError("expected a list of channel names")
             cleaned = [str(c).strip() for c in raw if str(c).strip()]
-            if not cleaned:
+            if not cleaned and kind == "channel_list":
                 raise ValueError("at least one channel required")
             return cleaned
         raise ValueError(f"unknown coercer {kind!r}")
@@ -346,111 +468,106 @@ class AutovalveController(Controller):
 
     def _control_loop(self) -> None:
         while not self._stop.is_set():
-            if self._enabled:
-                self._step()
-                self.publish_status()
+            self._step()
+            self.publish_status()
             self._stop.wait(self._scan_interval)
 
     def _step(self) -> None:
-        if self._state == FillState.WAITING:
-            self._handle_waiting()
-        elif self._state == FillState.FILLING:
-            self._handle_filling()
-        elif self._state == FillState.COOLDOWN:
-            self._handle_cooldown()
+        with self._lock:
+            now = time.time()
 
-    # ── state handlers ─────────────────────────────────────────
-
-    def _handle_waiting(self) -> None:
-        if self._should_fill():
-            self._open_valve()
-            self._state = FillState.FILLING
-            self._fill_start = time.time()
-            log.info("Autovalve: WAITING → FILLING")
-
-    def _handle_filling(self) -> None:
-        elapsed = time.time() - (self._fill_start or time.time())
-
-        # Safety: fill timeout
-        if elapsed > self._fill_timeout:
-            log.warning(
-                "Autovalve: fill timeout (%.0fs) — closing", elapsed
-            )
-            self._close_valve()
-            self._transition_to_cooldown()
-            return
-
-        # Safety: overfill
-        if self._overfill_value > self._overfill_threshold:
-            log.warning(
-                "Autovalve: overfill (%.2fV > %.2fV) — closing",
-                self._overfill_value,
-                self._overfill_threshold,
-            )
-            self._close_valve()
-            self._transition_to_cooldown()
-            return
-
-        # Normal completion: level reached target
-        for ch in self._level_channels:
-            if self._latest_levels.get(ch, 0) >= self._full_tank:
-                log.info(
-                    "Autovalve: tank full (%s=%.2fV) — closing",
-                    ch,
-                    self._latest_levels[ch],
-                )
-                self._close_valve()
-                self._transition_to_cooldown()
+            if self._valve_open:
+                # Auto-close: any one condition closes the valve, whoever opened it.
+                if self._close_reason is None and self._autoclose:
+                    reason = self._close_condition(now)
+                    if reason:
+                        self._request_close(reason)
+                        return
+                if self._close_reason is not None:
+                    self._close_valve()   # repeat until the relay reports closed
                 return
 
-    def _handle_cooldown(self) -> None:
-        if self._last_fill_end is None:
-            self._transition_to_cooldown()
-            return
-        elapsed = time.time() - self._last_fill_end
-        if elapsed >= self._cooldown_time:
-            self._state = FillState.WAITING
-            log.info(
-                "Autovalve: COOLDOWN → WAITING (%.0fs elapsed)", elapsed
-            )
+            if self._valve_open is None:
+                return   # relay state not reported yet: never open blind
 
-    def _transition_to_cooldown(self) -> None:
-        self._state = FillState.COOLDOWN
-        self._last_fill_end = time.time()
-        self._fill_start = None
-        log.info("Autovalve: → COOLDOWN")
+            if self._state == FillState.COOLDOWN:
+                if (self._last_close_at is not None
+                        and now - self._last_close_at < self._cooldown_time):
+                    return
+                self._state = FillState.WAITING
+                log.info("Autovalve: COOLDOWN -> WAITING (%.0fs elapsed)",
+                         now - (self._last_close_at or now))
+
+            if not (self._autofill and self._autoclose):
+                return
+            if self._open_sent_at is not None:
+                if now - self._open_sent_at < _OPEN_CONFIRM_S:
+                    return
+                log.warning("Autovalve: auto-fill open not confirmed by the relay; retrying")
+                self._open_sent_at = None
+
+            # Auto-fill: all conditions must hold, and none of the close
+            # conditions (the timer aside) may already be true.
+            why = self._fill_condition()
+            if why is None:
+                return
+            blocked = self._close_condition(now, include_timer=False)
+            if blocked:
+                return
+            log.info("Autovalve: auto-fill, %s -> opening", why)
+            self._open_sent_at = now
+            self._open_valve()
+
+    def _request_close(self, reason: str) -> None:
+        if self._close_reason is None:
+            self._close_reason = reason
+            log.warning("Autovalve: auto-close, %s -> closing", reason)
+        self._close_valve()
 
     # ── decision logic ─────────────────────────────────────────
 
-    def _should_fill(self) -> bool:
+    def _close_condition(self, now: float, include_timer: bool = True) -> str | None:
+        """Return why the valve should close (first condition that holds), or None."""
+        if include_timer and self._opened_at is not None:
+            elapsed = now - self._opened_at
+            if elapsed >= self._fill_timeout:
+                return f"fill timer ({elapsed:.0f} s >= {self._fill_timeout:.0f} s)"
+        ov = self._latest_levels.get(self._overfill_channel)
+        if ov is not None and ov > self._overfill_threshold:
+            return (f"overfill ({self._overfill_channel}={ov:.2f} V > "
+                    f"{self._overfill_threshold:.2f} V)")
+        for ch in self._close_channels:
+            v = self._latest_levels.get(ch)
+            if v is not None and v >= self._full_tank:
+                return f"full ({ch}={v:.2f} V >= {self._full_tank:.2f} V)"
+        return None
+
+    def _fill_condition(self) -> str | None:
+        """Return a description if ALL fill conditions hold, else None.
+        A channel with no data yet counts as not met (never fill blind)."""
+        if not self._fill_channels:
+            return None
+        parts = []
+        if self._mode == "threshold":
+            for ch in self._fill_channels:
+                v = self._latest_levels.get(ch)
+                if v is None or v >= self._fill_trigger:
+                    return None
+                parts.append(f"{ch}={v:.2f} V")
+            return (f"all fill channels below {self._fill_trigger:.2f} V "
+                    f"({', '.join(parts)})")
         if self._mode == "gradient":
-            return self._check_gradient()
-        elif self._mode == "threshold":
-            return self._check_threshold()
-        return False
-
-    def _check_gradient(self) -> bool:
-        for ch in self._level_channels:
-            history = self._level_history.get(ch)
-            if not history or len(history) < 10:
-                continue
-            grad = self._compute_gradient(history)
-            if grad < self._gradient_trigger:
-                log.info(
-                    "Autovalve: gradient trigger on %s (%.2e < %.2e)",
-                    ch,
-                    grad,
-                    self._gradient_trigger,
-                )
-                return True
-        return False
-
-    def _check_threshold(self) -> bool:
-        for ch in self._level_channels:
-            value = self._latest_levels.get(ch)
-            if value is not None and value < self._fill_trigger:
-                return True
-        return False
+            for ch in self._fill_channels:
+                history = self._level_history.get(ch)
+                if not history or len(history) < 10:
+                    return None
+                grad = self._compute_gradient(history)
+                if grad >= self._gradient_trigger:
+                    return None
+                parts.append(f"{ch}={grad:.2e} V/s")
+            return (f"all fill channels falling faster than "
+                    f"{self._gradient_trigger:.2e} V/s ({', '.join(parts)})")
+        return None
 
     @staticmethod
     def _compute_gradient(history: deque) -> float:

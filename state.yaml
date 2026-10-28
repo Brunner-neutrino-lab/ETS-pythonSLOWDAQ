@@ -238,55 +238,76 @@ groups:
       period_s: null
     autovalve_mode:
       kind: enum
-      label: "Autovalve mode"
+      label: "Auto-fill mode"
       values: [gradient, threshold, manual]
       source: {topic: ets/status/autovalve, key: mode}
       period_s: null
-    autovalve_enabled:
+    autovalve_autofill:
       kind: binary
-      label: "Autovalve enabled"
-      source: {topic: ets/status/autovalve, key: enabled}
+      label: "Autovalve: auto-fill on"
+      source: {topic: ets/status/autovalve, key: autofill}
+      period_s: null
+    autovalve_autoclose:
+      kind: binary
+      label: "Autovalve: auto-close on"
+      source: {topic: ets/status/autovalve, key: autoclose}
+      period_s: null
+    autovalve_valve_open_s:
+      kind: analog
+      unit: s
+      label: "Autovalve: LN2 valve open for"
+      source: {topic: ets/status/autovalve, key: valve_open_s}
+      period_s: null
+    autovalve_fill_source:
+      kind: text
+      label: "Autovalve: current fill started by"
+      source: {topic: ets/status/autovalve, key: fill_source}
+      period_s: null
+    autovalve_last_close_reason:
+      kind: text
+      label: "Autovalve: last close reason"
+      source: {topic: ets/status/autovalve, key: last_close_reason}
       period_s: null
     # ── Autovalve tunables — set via ets/commands/autovalve/set ───────
     autovalve_fill_trigger:
       kind: analog
       unit: V
-      label: "Autovalve: fill-trigger level (threshold mode)"
+      label: "Auto-fill: every fill channel below (threshold mode)"
       source: {topic: ets/status/autovalve, key: fill_trigger}
       period_s: null
     autovalve_full_tank:
       kind: analog
       unit: V
-      label: "Autovalve: full-tank level"
+      label: "Auto-close: close-channel level"
       source: {topic: ets/status/autovalve, key: full_tank}
       period_s: null
     autovalve_overfill_threshold:
       kind: analog
       unit: V
-      label: "Autovalve: overfill threshold"
+      label: "Auto-close: overfill threshold"
       source: {topic: ets/status/autovalve, key: overfill_threshold}
       period_s: null
     autovalve_gradient_trigger:
       kind: analog
       unit: V/s
-      label: "Autovalve: gradient trigger (V/s)"
+      label: "Auto-fill: gradient trigger (V/s, gradient mode)"
       source: {topic: ets/status/autovalve, key: gradient_trigger}
       period_s: null
     autovalve_fill_timeout:
       kind: analog
       unit: s
-      label: "Autovalve: fill timeout"
+      label: "Auto-close: fill timer"
       source: {topic: ets/status/autovalve, key: fill_timeout}
       period_s: null
     autovalve_cooldown:
       kind: analog
       unit: s
-      label: "Autovalve: cooldown"
+      label: "Auto-fill: cooldown after a close"
       source: {topic: ets/status/autovalve, key: cooldown}
       period_s: null
     autovalve_overfill_channel:
       kind: text
-      label: "Autovalve: overfill channel"
+      label: "Auto-close: overfill channel"
       source: {topic: ets/status/autovalve, key: overfill_channel}
       period_s: null
     humidity_pid_enabled:

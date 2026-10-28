@@ -203,7 +203,10 @@ ETS-slowcontrol/
 | `ets/commands/lakeshore/mout` | subscribe | Manual heater output % |
 | `ets/commands/lakeshore/outmode` | subscribe | Output mode (0..5) |
 | `ets/commands/lakeshore/ramp` | subscribe | Setpoint ramp on/off + rate K/min |
-| `ets/commands/autovalve/mode` | subscribe | `gradient` / `threshold` / `manual` |
+| `ets/commands/autovalve/autoclose` | subscribe | `{"enabled": bool}` — close the LN2 valve (any opener) on timer / overfill / close channels; on at boot; off also turns auto-fill off |
+| `ets/commands/autovalve/autofill` | subscribe | `{"enabled": bool}` — open when all fill channels meet the trigger; off at boot; on also turns auto-close on |
+| `ets/commands/autovalve/mode` | subscribe | Auto-fill trigger `gradient` / `threshold` (legacy `auto` / `manual` = auto-fill on / off) |
+| `ets/commands/autovalve/set` | subscribe | Tunables, e.g. `{"fill_channels": [...], "close_channels": [...], "fill_timeout": 300}` |
 | `ets/commands/humidity/setpoint` | subscribe | Humidity PID setpoint |
 | `ets/status/{controller}` | publish | Controller state (retained) |
 | `ets/status/relays/{name}` | publish | Relay state (retained) |
